@@ -1,0 +1,8 @@
+opencv-python-headless # change to `opencv` to visualize videos
+pandas
+matplotlib
+seaborn
+scikit-learn
+scipy
+pyarrow
+opencv-python
