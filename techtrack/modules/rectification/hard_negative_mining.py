@@ -118,6 +118,7 @@ class HardNegativeMiner:
         # Concatenate all rows at once
         self.table = pd.DataFrame(table_rows)
 
+
     def sample_hard_negatives(self, num_hard_negatives, criteria):
         """
         Sample hard negative examples based on the specified criteria.
@@ -138,5 +139,20 @@ class HardNegativeMiner:
         
         # TASK: Complete this method to rank the hard samples.
 
-        
-        pass
+        if self.table is None or self.table.empty:
+            self.__construct_table()
+
+        if criteria not in self.table.columns:
+            raise KeyError(f"Column '{criteria}' not found in hard negative table.")
+
+        if num_hard_negatives <= 0:
+            return self.table.iloc[0:0].copy()
+
+        hard_negatives = (
+            self.table
+            .sort_values(by=criteria, ascending=False)
+            .head(num_hard_negatives)
+            .copy()
+        )
+
+        return hard_negatives

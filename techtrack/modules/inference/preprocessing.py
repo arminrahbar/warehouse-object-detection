@@ -58,13 +58,26 @@ class Preprocessing:
         # The standard Docker Engine does not support graphic displays, 
         # unless configured to do so.
 
+        if self.drop_rate <= 0:
+            raise ValueError("drop_rate must be greater than 0.")
+
         cap = cv2.VideoCapture(self.filename)
 
         if not cap.isOpened():
             raise ValueError(f"Error: Unable to open video file '{self.filename}'.")
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            yield frame
+        frame_number = 0
 
-        cap.release()
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+
+                if not ret:
+                    break
+
+                if frame_number % self.drop_rate == 0:
+                    yield frame
+
+                frame_number += 1
+        finally:
+            cap.release()

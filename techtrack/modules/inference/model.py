@@ -57,12 +57,43 @@ class Detector:
         - OpenCV YOLO Documentation: 
           https://opencv-tutorial.readthedocs.io/en/latest/yolo/yolo.html#create-a-blob
         """
+        if preprocessed_frame is None or preprocessed_frame.size == 0:
+            raise ValueError("Empty frame provided to Detector.predict().")
+
         self.img_height, self.img_width = preprocessed_frame.shape[:2]
 
         # TASK: Use the YOLO model to return all raw outputs
+        blob = cv2.dnn.blobFromImage(
+            preprocessed_frame,
+            scalefactor=1 / 255.0,
+            size=(416, 416),
+            mean=(0, 0, 0),
+            swapRB=True,
+            crop=False
+        )
+
+        self.net.setInput(blob)
+
+        output_layers = []
+        try:
+            layer_names = self.net.getLayerNames()
+            unconnected_layers = self.net.getUnconnectedOutLayers()
+
+            if unconnected_layers is not None and len(unconnected_layers) > 0:
+                for layer_index in np.array(unconnected_layers).flatten():
+                    idx = int(layer_index) - 1
+                    if 0 <= idx < len(layer_names):
+                        output_layers.append(layer_names[idx])
+        except Exception:
+            output_layers = []
+
+        if output_layers:
+            outputs = self.net.forward(output_layers)
+        else:
+            outputs = self.net.forward()
         
         # Return model outputs:
-        # return outputs
+        return outputs
 
     def post_process(
         self, predict_output: List[np.ndarray]
@@ -107,9 +138,42 @@ class Detector:
         #         by processing the raw YOLO model predictions and filters out 
         #         low-confidence detections (i.e., < score_threshold). Use the logic
         #         in Line 83-88.
+        bboxes = []
+        class_ids = []
+        confidence_scores = []
+        class_scores = []
+
+        for output in predict_output:
+            for detection in output:
+                if len(detection) < 5:
+                    continue
+
+                objectness_score = float(detection[4])
+
+                if objectness_score <= self.score_threshold:
+                    continue
+
+                scores = detection[5:]
+                if len(scores) == 0:
+                    continue
+
+                class_id = int(np.argmax(scores))
+
+                center_x = int(detection[0] * self.img_width)
+                center_y = int(detection[1] * self.img_height)
+                width = int(detection[2] * self.img_width)
+                height = int(detection[3] * self.img_height)
+
+                x = int(center_x - width / 2)
+                y = int(center_y - height / 2)
+
+                bboxes.append([x, y, width, height])
+                class_ids.append(class_id)
+                confidence_scores.append(objectness_score)
+                class_scores.append(scores)
 
         # Return these variables in order:
-        # return bboxes, class_ids, confidence_scores, class_scores
+        return bboxes, class_ids, confidence_scores, class_scores
 
 
 """
