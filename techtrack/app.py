@@ -7,10 +7,10 @@ from modules.inference.preprocessing import Preprocessing
 
 class InferenceService:
     """
-    Handles real-time video inference by integrating preprocessing, object detection, 
+    Handles real-time video inference by integrating preprocessing, object detection,
     and Non-Maximum Suppression (NMS) filtering.
 
-    This service continuously captures video frames, applies object detection, 
+    This service continuously captures video frames, applies object detection,
     filters results using NMS, and outputs predictions.
     """
 
@@ -34,6 +34,9 @@ class InferenceService:
         self.drop_rate = drop_rate
         self.save_dir = save_dir
 
+        if self.save_dir:
+            os.makedirs(self.save_dir, exist_ok=True)
+
         print("[INFO] Inference Service initialized.")
 
     def draw_boxes(self, frame, bboxes, class_ids, confidence_scores):
@@ -48,14 +51,27 @@ class InferenceService:
         :return: The frame with drawn bounding boxes.
         """
         for i, (x, y, w, h) in enumerate(bboxes):
-            # Draw bounding box
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # Prepare label text
-            label = f"Class {class_ids[i]}: {confidence_scores[i]:.2f}"
+            class_id = class_ids[i]
 
-            # Put label text on the frame
-            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            if 0 <= class_id < len(self.detector.classes):
+                class_name = self.detector.classes[class_id]
+            else:
+                class_name = f"Class {class_id}"
+
+            label = f"{class_name}: {confidence_scores[i]:.2f}"
+            label_y = max(y - 10, 20)
+
+            cv2.putText(
+                frame,
+                label,
+                (x, label_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 0, 255),
+                2
+            )
 
         return frame
 
@@ -103,14 +119,57 @@ class InferenceService:
         service.run()
         ```
         """
-        
+
         # TASK: Implement your Inference service. Use the docstrings to guide you on the
-        #       logic behind this implementation. 
+        #       logic behind this implementation.
+
+        frame_count = 0
+
+        try:
+            for frame in self.stream.capture_video():
+                predictions = self.detector.predict(frame)
+
+                bboxes, class_ids, confidence_scores, class_scores = self.detector.post_process(
+                    predictions
+                )
+
+                filtered_bboxes, filtered_class_ids, filtered_scores, filtered_class_scores = self.nms.filter(
+                    bboxes,
+                    class_ids,
+                    confidence_scores,
+                    class_scores
+                )
+
+                print(f"[INFO] Frame {frame_count}: {len(filtered_bboxes)} detections")
+
+                for bbox, class_id, score in zip(filtered_bboxes, filtered_class_ids, filtered_scores):
+                    print(
+                        f"[DETECTION] frame={frame_count}, "
+                        f"bbox={bbox}, class_id={class_id}, object_score={score:.4f}"
+                    )
+
+                processed_frame = self.draw_boxes(
+                    frame.copy(),
+                    filtered_bboxes,
+                    filtered_class_ids,
+                    filtered_scores
+                )
+
+                self.save_frame(processed_frame, frame_count)
+
+                frame_count += 1
+
+        except KeyboardInterrupt:
+            print("[INFO] Inference interrupted by user.")
+
+        print(f"[INFO] Inference completed. Processed {frame_count} frames.")
 
 
 # Runner for Inference Service
 if __name__ == "__main__":
     print("[INFO] Starting Inference Service...")
+
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
     # Initialize Video Processing
     VIDEO_SOURCE = "udp://127.0.0.1:23000"
@@ -118,9 +177,24 @@ if __name__ == "__main__":
     stream = Preprocessing(VIDEO_SOURCE, drop_rate=60)
 
     # Initialize Model
-    WEIGHTS_PATH = "storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights"
-    CONFIG_PATH = "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg"
-    CLASS_NAMES_PATH = "storage/yolo_models/logistics.names"
+    WEIGHTS_PATH = os.path.join(
+        BASE_DIR,
+        "storage",
+        "yolo_model_1",
+        "yolov4-tiny-logistics_size_416_1.weights"
+    )
+    CONFIG_PATH = os.path.join(
+        BASE_DIR,
+        "storage",
+        "yolo_model_1",
+        "yolov4-tiny-logistics_size_416_1.cfg"
+    )
+    CLASS_NAMES_PATH = os.path.join(
+        BASE_DIR,
+        "storage",
+        "yolo_model_1",
+        "logistics.names"
+    )
     SCORE_THRESHOLD = 0.5
 
     print("[INFO] Loading YOLO Model...")
@@ -134,8 +208,9 @@ if __name__ == "__main__":
     print("[INFO] NMS initialized.")
 
     # Create and run inference service
+    SAVE_DIR = os.path.join(BASE_DIR, "storage", "detections")
     print("[INFO] Starting Inference Service loop...")
-    service = InferenceService(stream, model, nms, save_dir='output')
+    service = InferenceService(stream, model, nms, save_dir=SAVE_DIR)
     service.run()
 
     print("[INFO] Inference Service terminated.")

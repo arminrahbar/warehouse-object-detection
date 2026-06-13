@@ -1,4 +1,4 @@
-techtrack/storage/
+storage/
 __pycache__/
 *.pyc
 .pytest_cache/
