@@ -16,6 +16,7 @@ COPY requirements.txt requirements.txt
 
 # Use opencv-python-headless inside Docker and avoid installing opencv-python GUI package
 RUN sed '/^opencv-python$/d' requirements.txt > requirements-docker.txt \
+    && echo "opencv-python-headless" >> requirements-docker.txt \
     && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements-docker.txt
 
