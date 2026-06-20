@@ -26,7 +26,7 @@ The evaluation considers three kinds of evidence:
 
 The duplicate-like detection count is not an AP metric. It is a diagnostic used to measure whether a looser NMS threshold leaves redundant overlapping predictions in the final output.
 
-### Table 7: NMS Threshold Sweep Summary
+### Table 1: NMS Threshold Sweep Summary
 
 | NMS Threshold | mAP@0.5 | Predictions After NMS | Duplicate-Like Pairs: IoU > 0.5 | Images with Duplicate-Like Pairs |
 | ------------: | ------: | --------------------: | ------------------------------: | -------------------------------: |
@@ -38,59 +38,67 @@ The duplicate-like detection count is not an AP metric. It is a diagnostic used 
 |          0.60 |  0.5514 |                11,433 |                             211 |                              188 |
 |          0.70 |  0.5416 |                12,082 |                             856 |                              623 |
 
-**Table 7: NMS threshold sweep summary.** The table compares mAP@0.5, prediction count, and duplicate-like detection behavior across NMS IoU thresholds.
+**Table 1: NMS threshold sweep summary.** The table compares mAP@0.5, prediction count, and duplicate-like detection behavior across NMS IoU thresholds.
 
 **Interpretation and design impact.** The results show the main NMS trade-off. Very low thresholds are too aggressive: at 0.20 and 0.30, fewer predictions survive NMS and mAP is lower. Performance improves as the threshold rises toward 0.50. However, moving above 0.50 begins to create duplicate-like detections. Threshold 0.55 gives effectively the same mAP as 0.50, but adds 120 more predictions and creates 86 duplicate-like pairs. Threshold 0.60 produces the highest aggregate mAP, but its gain over 0.50 is only about 0.00085 while creating 211 duplicate-like pairs. Threshold 0.70 is clearly too loose because mAP drops while duplicate-like detections increase sharply.
 
-### Figure 6: mAP@0.5 Across NMS IoU Thresholds
+### Figure 1: mAP@0.5 Across NMS IoU Thresholds
 
-![Figure 6: mAP@0.5 across NMS IoU thresholds](../figures/03_nms_thresholding/01_map_by_threshold.png)
+![Figure 1: mAP@0.5 across NMS IoU thresholds](../figures/03_nms_thresholding/01_map_by_threshold.png)
 
-**Figure 6: mAP@0.5 across NMS IoU thresholds.** This figure shows how aggregate detection performance changes as the NMS IoU threshold is varied.
+**Figure 1: mAP@0.5 across NMS IoU thresholds.** This figure shows how aggregate detection performance changes as the NMS IoU threshold is varied.
 
 **Interpretation and design impact.** The mAP curve rises from 0.20 through 0.50 and then flattens. Threshold 0.60 is the numerical peak, but the improvement over 0.50 is extremely small. This means the threshold decision should not be based on aggregate mAP alone. The more important design question is whether the small mAP gain at looser thresholds justifies the additional predictions and duplicate-like detections. The remaining evidence shows that it does not.
 
-### Figure 7: Post-NMS Prediction Count Across Thresholds
+### Figure 2: Post-NMS Prediction Count Across Thresholds
 
-![Figure 7: Prediction count across NMS thresholds](../figures/03_nms_thresholding/02_prediction_count_by_threshold.png)
+![Figure 2: Prediction count across NMS thresholds](../figures/03_nms_thresholding/02_prediction_count_by_threshold.png)
 
-**Figure 7: Post-NMS prediction count across NMS thresholds.** This figure shows how many detections remain after NMS at each threshold.
+**Figure 2: Post-NMS prediction count across NMS thresholds.** This figure shows how many detections remain after NMS at each threshold.
 
 **Interpretation and design impact.** Prediction count increases as the NMS threshold becomes looser. This is expected because higher NMS thresholds allow more overlapping boxes to survive suppression. A higher prediction count is not automatically harmful if the additional boxes are valid detections, but in a warehouse perception system it can increase downstream review burden, duplicate detections, and noisy object states. This is especially important for systems where detection outputs may be consumed by monitoring tools, robots, or human operators.
 
-### Figure 8: Duplicate-Like Prediction Pairs Across Thresholds
+### Figure 3: Duplicate-Like Prediction Pairs Across Thresholds
 
-![Figure 8: Duplicate-like prediction pairs across NMS thresholds](../figures/03_nms_thresholding/03_duplicate_pairs_by_threshold.png)
+![Figure 3: Duplicate-like prediction pairs across NMS thresholds](../figures/03_nms_thresholding/03_duplicate_pairs_by_threshold.png)
 
-**Figure 8: Duplicate-like prediction pairs across NMS thresholds.** This figure counts same-class post-NMS prediction pairs with IoU greater than 0.5. It is used as a diagnostic for redundant overlapping detections.
+**Figure 3: Duplicate-like prediction pairs across NMS thresholds.** This figure counts same-class post-NMS prediction pairs with IoU greater than 0.5. It is used as a diagnostic for redundant overlapping detections.
 
 **Interpretation and design impact.** This figure gives the strongest evidence against choosing a threshold above 0.50. Thresholds from 0.20 through 0.50 produce no duplicate-like prediction pairs under this diagnostic. Duplicate-like detections begin at 0.55 and increase rapidly at 0.60 and 0.70. This means the small aggregate mAP gain at 0.60 comes with a clear cost: the final detector output becomes less clean. For deployment, this matters because duplicate boxes can make the system appear to detect more objects than are actually present, confuse downstream logic, or create unnecessary operator attention.
 
-### Table 8: Focused Threshold Decision Comparison
+### Table 2: Focused Threshold Decision Comparison
 
 | NMS Threshold | mAP@0.5 | mAP Change vs 0.50 | Predictions After NMS | Prediction Change vs 0.50 | Duplicate-Like Pairs: IoU > 0.5 | Images with Duplicate-Like Pairs |
 | ------------: | ------: | -----------------: | --------------------: | ------------------------: | ------------------------------: | -------------------------------: |
 |          0.50 |  0.5505 |             0.0000 |                11,157 |                         0 |                               0 |                                0 |
-|          0.55 |  0.5505 |            -0.0000 |                11,277 |                       120 |                              86 |                               78 |
+|          0.55 |  0.5505 |            0.0000 |                11,277 |                       120 |                              86 |                               78 |
 |          0.60 |  0.5514 |             0.0008 |                11,433 |                       276 |                             211 |                              188 |
 |          0.70 |  0.5416 |            -0.0089 |                12,082 |                       925 |                             856 |                              623 |
 
-**Table 8: Focused threshold decision comparison.** The table compares the main candidate thresholds near the final decision boundary, using 0.50 as the reference point.
+**Table 2: Focused threshold decision comparison.** The table compares the main candidate thresholds near the final decision boundary, using 0.50 as the reference point.
 
 **Interpretation and design impact.** Threshold 0.50 is the strongest operating point. Threshold 0.55 gives no meaningful mAP improvement, but creates duplicate-like predictions. Threshold 0.60 gives the highest mAP, but the gain over 0.50 is only 0.0008, while it adds 276 predictions and 211 duplicate-like pairs. Threshold 0.70 is worse on both accuracy and duplicate behavior. Therefore, 0.50 gives the best balance between accuracy and clean post-processing.
 
-### Table 9: Per-Class Sensitivity Near the Decision Boundary
+### Table 3: Per-Class Sensitivity Near the Decision Boundary
 
 | Comparison   | Classes Improved | Classes Unchanged | Classes Worsened |
 | ------------ | ---------------: | ----------------: | ---------------: |
 | 0.55 vs 0.50 |                4 |                 0 |               16 |
 | 0.60 vs 0.50 |                2 |                 0 |               18 |
 
-**Table 9: Per-class sensitivity around the NMS decision boundary.** The table counts how many classes improved or worsened when moving from NMS 0.50 to looser thresholds.
+**Table 3: Per-class sensitivity around the NMS decision boundary.** The table counts how many classes improved or worsened when moving from NMS 0.50 to looser thresholds.
 
 **Interpretation and design impact.** The class-level evidence supports rejecting the looser thresholds. Threshold 0.55 improves only four classes and worsens sixteen. Threshold 0.60 improves only two classes and worsens eighteen. The aggregate mAP peak at 0.60 is mainly driven by a large gain in safety vest AP, not by broad class-level improvement. A deployment threshold should not be chosen only because one class raises the aggregate average slightly while most classes decline. This makes 0.50 the more stable system-level choice.
 
-### Table 10: Crowded-Image Subset Check
+### Figure 4: mAP@0.5 by NMS Threshold and Subset
+
+![Figure 4: mAP@0.5 by NMS threshold and subset](../figures/03_nms_thresholding/04_map_by_threshold_and_subset.png)
+
+**Figure 4: mAP@0.5 by NMS threshold and subset.** This figure compares aggregate mAP@0.5 on all selected images and on the crowded-image subset across NMS thresholds.
+
+**Interpretation and design impact.** The crowded-image subset has lower mAP than the full selected sample, which is expected because crowded scenes are more difficult. Looser NMS thresholds slightly improve crowded-image mAP, but this improvement must be weighed against the duplicate-like detections introduced at thresholds above 0.50.
+
+### Table 4: Crowded-Image Subset Check
 
 | Subset              | Images | Ground Truth Objects | NMS Threshold | mAP@0.5 | Predictions After NMS | Duplicate-Like Pairs: IoU > 0.5 | Images with Duplicate-Like Pairs |
 | ------------------- | -----: | -------------------: | ------------: | ------: | --------------------: | ------------------------------: | -------------------------------: |
@@ -103,7 +111,7 @@ The duplicate-like detection count is not an AP metric. It is a diagnostic used 
 | All selected images |  5,000 |               19,196 |          0.70 |  0.5416 |                12,082 |                             856 |                              623 |
 | Crowded images      |  1,021 |               11,411 |          0.70 |  0.3464 |                 6,406 |                             341 |                              232 |
 
-**Table 10: Crowded-image subset check.** The crowded subset contains selected-sample images where at least two ground-truth boxes overlap slightly, defined as a ground-truth box-pair IoU greater than 0.1. This subset is used to check NMS behavior on images where real objects are spatially close and suppression errors are more likely.
+**Table 4: Crowded-image subset check.** The crowded subset contains selected-sample images where at least two ground-truth boxes overlap slightly, defined as a ground-truth box-pair IoU greater than 0.1. This subset is used to check NMS behavior on images where real objects are spatially close and suppression errors are more likely.
 
 **Interpretation and design impact.** The crowded-image subset has lower mAP than the full selected sample, which is expected because crowded scenes are more difficult. Looser thresholds slightly improve mAP on crowded images, but they also introduce duplicate-like predictions. At 0.55, crowded-image mAP is essentially unchanged compared with 0.50, but duplicate-like pairs appear. At 0.60, crowded-image mAP improves from 0.3435 to 0.3469, but duplicate-like pairs increase to 114 in the crowded subset. This confirms the same trade-off seen in the full sample: looser NMS can preserve more boxes in crowded scenes, but it also makes the output noisier.
 
