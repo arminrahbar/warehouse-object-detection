@@ -5,13 +5,17 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "analysis" / "outputs"
-FIG = ROOT / "analysis" / "figures"
-OUT.mkdir(parents=True, exist_ok=True)
-FIG.mkdir(parents=True, exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
 
-COMPONENT_PATH = OUT / "task5_hnm_image_loss_components_selected_sample.csv"
+OUTPUT_DIR = EXPERIMENTS_DIR / "outputs"
+HNM_OUTPUT_DIR = OUTPUT_DIR / "hard_negative_mining"
+FIGURE_DIR = EXPERIMENTS_DIR / "figures" / "05_hard_negative_mining"
+
+HNM_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+COMPONENT_PATH = HNM_OUTPUT_DIR / "image_loss_components.csv"
 
 TOP_N = 250
 
@@ -354,10 +358,10 @@ def plot_component_scale(df, scales):
     plt.yscale("log")
     plt.xticks(x, [COMPONENT_LABELS[c] for c in stats["component"]], rotation=20, ha="right")
     plt.ylabel("Loss value, log scale")
-    plt.title("Task 5: Loss component scale before λ weighting")
+    plt.title("Loss component scale before λ weighting")
     plt.legend()
     plt.tight_layout()
-    path = FIG / "task5_hnm_component_scale_selected_sample.png"
+    path = FIGURE_DIR / "01_component_scale.png"
     plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print("[WRITE]", path)
@@ -384,7 +388,7 @@ def plot_overlap(overlap_df, mode, configs, filename, title):
             plt.text(j, i, f"{matrix.values[i, j]:.2f}", ha="center", va="center")
 
     plt.tight_layout()
-    path = FIG / filename
+    path = FIGURE_DIR / filename
     plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print("[WRITE]", path)
@@ -407,11 +411,11 @@ def plot_density(density_df, mode, configs, filename):
     ax = pivot.plot(kind="bar", stacked=True, figsize=(10, 6))
     ax.set_ylabel("Share of sampled images")
     ax.set_xlabel("λ configuration")
-    ax.set_title(f"Task 5: Density bucket distribution of top-{TOP_N} HNM samples ({mode})")
+    ax.set_title(f"Density bucket distribution of top-{TOP_N} HNM samples ({mode})")
     ax.legend(title="Density bucket", bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.xticks(rotation=25, ha="right")
     plt.tight_layout()
-    path = FIG / filename
+    path = FIGURE_DIR / filename
     plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print("[WRITE]", path)
@@ -444,10 +448,10 @@ def plot_profile(summary_df, mode, configs, filename):
 
     plt.xticks(x, labels, rotation=25, ha="right")
     plt.ylabel("Average count per sampled image")
-    plt.title(f"Task 5: Image profile of top-{TOP_N} HNM samples ({mode})")
+    plt.title(f"Image profile of top-{TOP_N} HNM samples ({mode})")
     plt.legend()
     plt.tight_layout()
-    path = FIG / filename
+    path = FIGURE_DIR / filename
     plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print("[WRITE]", path)
@@ -473,11 +477,11 @@ def plot_dominant(summary_df, mode, configs, filename):
     ax = pivot.plot(kind="bar", stacked=True, figsize=(10, 6))
     ax.set_ylabel("Share of sampled images")
     ax.set_xlabel("λ configuration")
-    ax.set_title(f"Task 5: Dominant loss contribution among top-{TOP_N} HNM samples ({mode})")
+    ax.set_title(f"Dominant loss contribution among top-{TOP_N} HNM samples ({mode})")
     ax.legend(title="Dominant contribution", bbox_to_anchor=(1.02, 1), loc="upper left")
     plt.xticks(rotation=25, ha="right")
     plt.tight_layout()
-    path = FIG / filename
+    path = FIGURE_DIR / filename
     plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print("[WRITE]", path)
@@ -519,14 +523,14 @@ def plot_class_presence(class_df, mode, configs, filename):
     plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=35, ha="right")
     plt.yticks(range(len(pivot.index)), pivot.index)
     plt.colorbar(label="Share of sampled images containing class")
-    plt.title(f"Task 5: Class presence in top-{TOP_N} HNM samples ({mode})")
+    plt.title(f"Class presence in top-{TOP_N} HNM samples ({mode})")
 
     for i in range(pivot.shape[0]):
         for j in range(pivot.shape[1]):
             plt.text(j, i, f"{pivot.values[i, j]:.2f}", ha="center", va="center", fontsize=8)
 
     plt.tight_layout()
-    path = FIG / filename
+    path = FIGURE_DIR / filename
     plt.savefig(path, dpi=200, bbox_inches="tight")
     plt.close()
     print("[WRITE]", path)
@@ -544,7 +548,7 @@ def main():
         scales[col] = p95 if p95 > 0 else 1.0
 
     print("=" * 100)
-    print("TASK 5 HNM λ SWEEP")
+    print("HNM λ SWEEP")
     print("=" * 100)
     print("Top-N sampled images per configuration:", TOP_N)
     print("\nRobust normalization scales, 95th percentile:")
@@ -552,7 +556,7 @@ def main():
         print(f"{col:20s}: {scale:.6f}")
 
     config_df = pd.DataFrame(CONFIGS)
-    config_path = OUT / "task5_hnm_lambda_configurations_selected_sample.csv"
+    config_path = HNM_OUTPUT_DIR / "lambda_configurations.csv"
     config_df.to_csv(config_path, index=False)
     print("[WRITE]", config_path)
 
@@ -562,11 +566,11 @@ def main():
     density_df = build_density(top_df)
     class_df = build_class_presence(top_df)
 
-    top_path = OUT / "task5_hnm_top_images_by_lambda_selected_sample.csv"
-    summary_path = OUT / "task5_hnm_lambda_summary_selected_sample.csv"
-    overlap_path = OUT / "task5_hnm_lambda_overlap_selected_sample.csv"
-    density_path = OUT / "task5_hnm_density_by_lambda_selected_sample.csv"
-    class_path = OUT / "task5_hnm_class_presence_by_lambda_selected_sample.csv"
+    top_path = HNM_OUTPUT_DIR / "top_images_by_lambda.csv"
+    summary_path = HNM_OUTPUT_DIR / "lambda_summary.csv"
+    overlap_path = HNM_OUTPUT_DIR / "lambda_overlap.csv"
+    density_path = HNM_OUTPUT_DIR / "density_by_lambda.csv"
+    class_path = HNM_OUTPUT_DIR / "class_presence_by_lambda.csv"
 
     top_df.to_csv(top_path, index=False)
     summary_df.to_csv(summary_path, index=False)
@@ -594,44 +598,44 @@ def main():
         overlap_df,
         mode="raw",
         configs=main_configs,
-        filename="task5_hnm_raw_lambda_overlap_selected_sample.png",
-        title=f"Task 5: Top-{TOP_N} sample overlap across raw λ settings",
+        filename="02_raw_overlap_by_lambda.png",
+        title=f"Top-{TOP_N} sample overlap across raw λ settings",
     )
 
     plot_overlap(
         overlap_df,
         mode="normalized",
         configs=main_configs,
-        filename="task5_hnm_normalized_lambda_overlap_selected_sample.png",
-        title=f"Task 5: Top-{TOP_N} sample overlap across scale-aware λ settings",
+        filename="03_normalized_overlap_by_lambda.png",
+        title=f"Top-{TOP_N} sample overlap across scale-aware λ settings",
     )
 
     plot_density(
         density_df,
         mode="normalized",
         configs=main_configs,
-        filename="task5_hnm_density_distribution_by_lambda_normalized_selected_sample.png",
+        filename="04_density_distribution_by_lambda.png",
     )
 
     plot_profile(
         summary_df,
         mode="normalized",
         configs=main_configs,
-        filename="task5_hnm_image_profile_by_lambda_normalized_selected_sample.png",
+        filename="05_image_profile_by_lambda.png",
     )
 
     plot_dominant(
         summary_df,
         mode="normalized",
         configs=main_configs,
-        filename="task5_hnm_dominant_component_by_lambda_normalized_selected_sample.png",
+        filename="06_dominant_component_by_lambda.png",
     )
 
     plot_class_presence(
         class_df,
         mode="normalized",
         configs=main_configs,
-        filename="task5_hnm_class_presence_by_lambda_normalized_selected_sample.png",
+        filename="07_class_presence_by_lambda.png",
     )
 
     print()

@@ -1,17 +1,25 @@
 from pathlib import Path
 import json
+
 import numpy as np
 import pandas as pd
 
-ROOT = Path.cwd()
-OUT = ROOT / "analysis" / "outputs"
-OUT.mkdir(parents=True, exist_ok=True)
 
-SAMPLE_PATH = OUT / "task2_selected_sample_index.csv"
-RAW_PRED_PATH = OUT / "task3_nts_model2_raw_predictions_selected_sample.csv"
-GT_PATH = OUT / "task3_nts_ground_truth_selected_sample.csv"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
 
-COMPONENT_PATH = OUT / "task5_hnm_image_loss_components_selected_sample.csv"
+OUTPUT_DIR = EXPERIMENTS_DIR / "outputs"
+SAMPLING_OUTPUT_DIR = OUTPUT_DIR / "dataset_sampling"
+NMS_OUTPUT_DIR = OUTPUT_DIR / "nms_thresholding"
+HNM_OUTPUT_DIR = OUTPUT_DIR / "hard_negative_mining"
+
+HNM_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+SAMPLE_PATH = SAMPLING_OUTPUT_DIR / "selected_sample_index.csv"
+RAW_PRED_PATH = NMS_OUTPUT_DIR / "model2_raw_predictions_sample5000.csv"
+GT_PATH = NMS_OUTPUT_DIR / "ground_truth_sample5000.csv"
+
+COMPONENT_PATH = HNM_OUTPUT_DIR / "image_loss_components.csv"
 
 IOU_THRESHOLD = 0.5
 NUM_CLASSES = 20
@@ -70,7 +78,7 @@ def parse_class_scores(value):
     return np.asarray(scores, dtype=float)
 
 
-def compute_image_components(image_row, pred_group, gt_group):
+def compute_image_components(pred_group, gt_group):
     loc_loss = 0.0
     conf_loss_obj = 0.0
     conf_loss_noobj = 0.0
@@ -168,6 +176,10 @@ def compute_image_components(image_row, pred_group, gt_group):
 
 
 def main():
+    for required_path in [SAMPLE_PATH, RAW_PRED_PATH, GT_PATH]:
+        if not required_path.exists():
+            raise FileNotFoundError(f"Missing required input: {required_path}")
+
     sample = pd.read_csv(SAMPLE_PATH)
     raw = pd.read_csv(RAW_PRED_PATH)
     gt = pd.read_csv(GT_PATH)
@@ -182,7 +194,7 @@ def main():
         pred_group = pred_groups.get(image_path)
         gt_group = gt_groups.get(image_path)
 
-        components = compute_image_components(image_row, pred_group, gt_group)
+        components = compute_image_components(pred_group, gt_group)
 
         rows.append({
             "image_file": image_row["image_file"],
@@ -203,11 +215,6 @@ def main():
     print("[WRITE]", COMPONENT_PATH)
     print("shape:", df.shape)
 
-    print()
-    print("=" * 100)
-    print("COMPONENT SCALE SUMMARY")
-    print("=" * 100)
-
     component_cols = [
         "loc_loss",
         "conf_loss_obj",
@@ -221,6 +228,10 @@ def main():
         "missed_gt_count",
     ]
 
+    print()
+    print("=" * 100)
+    print("COMPONENT SCALE SUMMARY")
+    print("=" * 100)
     print(df[component_cols].describe().T.to_string())
 
     print()

@@ -9,47 +9,84 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+
+OUTPUT_DIR = EXPERIMENTS_DIR / "outputs"
+SAMPLING_OUTPUT_DIR = OUTPUT_DIR / "dataset_sampling"
+AUGMENTATION_OUTPUT_DIR = OUTPUT_DIR / "augmentation_robustness"
+FIGURE_DIR = EXPERIMENTS_DIR / "figures" / "04_augmentation_robustness"
+
+AUGMENTATION_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from techtrack.modules.inference.model import Detector
 from techtrack.modules.inference.nms import NMS
+from techtrack.modules.rectification.augmentation import Augmenter
 from techtrack.modules.utils.metrics import (
     match_detections,
     calculate_precision_recall_curve,
     calculate_map_x_point_interpolated,
-    calculate_iou,
 )
 
-OUT = ROOT / "analysis" / "outputs"
-FIG = ROOT / "analysis" / "figures"
-OUT.mkdir(parents=True, exist_ok=True)
-FIG.mkdir(parents=True, exist_ok=True)
-
-PREFIX = "task3_nts"
-
-SAMPLE_INDEX = OUT / "task2_selected_sample_index.csv"
-OVERLAP_PROFILE = OUT / "task2_image_overlap_profile.csv"
-
-CLASS_FILE = ROOT / "techtrack" / "storage" / "yolo_model_2" / "logistics.names"
+SAMPLE_INDEX = SAMPLING_OUTPUT_DIR / "selected_sample_index.csv"
+CLASS_FILE = PROJECT_ROOT / "techtrack" / "storage" / "yolo_model_2" / "logistics.names"
 
 MODEL2 = {
-    "weights": ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.weights",
-    "cfg": ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.cfg",
-    "names": ROOT / "techtrack/storage/yolo_model_2/logistics.names",
+    "weights": PROJECT_ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.weights",
+    "cfg": PROJECT_ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.cfg",
+    "names": PROJECT_ROOT / "techtrack/storage/yolo_model_2/logistics.names",
 }
 
 MODEL_NAME = "model2"
 DATASET_NAME = "rare_aware_density_stratified_5000"
 
 SCORE_THRESHOLD = 0.5
+NMS_THRESHOLD = 0.5
 MAP_IOU_THRESHOLD = 0.5
 EVAL_TYPE = "combined"
 
-NMS_THRESHOLDS = [0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.7]
+CONDITIONS = [
+    {
+        "tag": "original",
+        "display": "Original",
+        "type": "none",
+    },
+    {
+        "tag": "gaussian_blur_k9",
+        "display": "Gaussian blur",
+        "type": "gaussian_blur",
+        "kernel_size": 9,
+        "sigma": 0,
+    },
+    {
+        "tag": "vertical_flip",
+        "display": "Vertical flip",
+        "type": "vertical_flip",
+    },
+    {
+        "tag": "brightness_increase",
+        "display": "Brightness increase",
+        "type": "brightness",
+        "alpha": 1.15,
+        "beta": 35,
+    },
+    {
+        "tag": "brightness_decrease",
+        "display": "Brightness decrease",
+        "type": "brightness",
+        "alpha": 0.85,
+        "beta": -35,
+    },
+]
 
 RAW_COLUMNS = [
     "model",
+    "dataset",
+    "augmentation_condition",
+    "augmentation_display",
     "image_file",
     "image_path",
     "bbox_x",
@@ -67,6 +104,9 @@ RAW_COLUMNS = [
 PRED_COLUMNS = RAW_COLUMNS + ["nms_threshold"]
 
 GT_COLUMNS = [
+    "dataset",
+    "augmentation_condition",
+    "augmentation_display",
     "image_file",
     "image_path",
     "class_id",
@@ -82,7 +122,33 @@ def load_classes():
     return [line.strip() for line in CLASS_FILE.read_text().splitlines() if line.strip()]
 
 
-def yolo_label_to_xywh(label_path: Path, image_w: int, image_h: int, classes):
+def apply_condition_to_image(image_bgr, condition):
+    condition_type = condition["type"]
+
+    if condition_type == "none":
+        return image_bgr
+
+    if condition_type == "gaussian_blur":
+        return Augmenter.gaussian_blur(
+            image=image_bgr,
+            kernel_size=condition.get("kernel_size", 9),
+            sigma=condition.get("sigma", 0),
+        )
+
+    if condition_type == "vertical_flip":
+        return Augmenter.vertical_flip(image=image_bgr)
+
+    if condition_type == "brightness":
+        return Augmenter.change_brightness(
+            image=image_bgr,
+            alpha=condition.get("alpha", 1.0),
+            beta=condition.get("beta", 0),
+        )
+
+    raise ValueError(f"Unsupported condition type: {condition_type}")
+
+
+def yolo_label_to_xywh_for_condition(label_path: Path, image_w: int, image_h: int, classes, condition):
     rows = []
     text = label_path.read_text().strip()
 
@@ -95,7 +161,6 @@ def yolo_label_to_xywh(label_path: Path, image_w: int, image_h: int, classes):
             continue
 
         class_id = int(float(parts[0]))
-
         if class_id < 0 or class_id >= len(classes):
             continue
 
@@ -106,6 +171,16 @@ def yolo_label_to_xywh(label_path: Path, image_w: int, image_h: int, classes):
 
         x = x_center - box_w / 2
         y = y_center - box_h / 2
+
+        if condition["type"] == "vertical_flip":
+            # Convert top-left y for vertically flipped image.
+            y = image_h - y - box_h
+
+        # Clip only to protect against tiny floating point boundary issues.
+        x = float(np.clip(x, 0, image_w))
+        y = float(np.clip(y, 0, image_h))
+        box_w = float(np.clip(box_w, 0, image_w))
+        box_h = float(np.clip(box_h, 0, image_h))
 
         rows.append({
             "class_id": class_id,
@@ -119,32 +194,36 @@ def yolo_label_to_xywh(label_path: Path, image_w: int, image_h: int, classes):
     return rows
 
 
-def build_ground_truth(idx, classes, suffix, force=False):
-    gt_path = OUT / f"{PREFIX}_ground_truth{suffix}.csv"
+def build_ground_truth(idx, classes, condition, run_label, force=False):
+    tag = condition["tag"]
+    gt_path = AUGMENTATION_OUTPUT_DIR / f"ground_truth_{tag}_{run_label}.csv"
 
     if gt_path.exists() and not force:
         print(f"[SKIP] Ground truth already exists: {gt_path}")
         return pd.read_csv(gt_path)
 
     print("=" * 100)
-    print("Building Task 3 ground-truth table")
+    print(f"Building ground-truth table for condition: {condition['display']}")
     print("=" * 100)
 
     rows = []
 
     for row_num, (_, row) in enumerate(idx.iterrows(), start=1):
-        image_path = ROOT / row["image_path"]
-        label_path = ROOT / row["label_path"]
+        image_path = PROJECT_ROOT / row["image_path"]
+        label_path = PROJECT_ROOT / row["label_path"]
 
         frame = cv2.imread(str(image_path))
         if frame is None:
-            print(f"[WARN] Could not read image for GT conversion: {image_path}")
+            print(f"[WARN] Could not read image for ground-truth conversion: {image_path}")
             continue
 
         image_h, image_w = frame.shape[:2]
 
-        for gt in yolo_label_to_xywh(label_path, image_w, image_h, classes):
+        for gt in yolo_label_to_xywh_for_condition(label_path, image_w, image_h, classes, condition):
             rows.append({
+                "dataset": DATASET_NAME,
+                "augmentation_condition": tag,
+                "augmentation_display": condition["display"],
                 "image_file": row["image_file"],
                 "image_path": row["image_path"],
                 "class_id": gt["class_id"],
@@ -156,7 +235,7 @@ def build_ground_truth(idx, classes, suffix, force=False):
             })
 
         if row_num % 1000 == 0:
-            print(f"[GT] processed {row_num}/{len(idx)} images")
+            print(f"[GT {tag}] processed {row_num}/{len(idx)} images")
 
     gt_df = pd.DataFrame(rows, columns=GT_COLUMNS)
     gt_df.to_csv(gt_path, index=False)
@@ -165,15 +244,16 @@ def build_ground_truth(idx, classes, suffix, force=False):
     return gt_df
 
 
-def run_raw_inference_model2(idx, classes, suffix, force=False):
-    raw_path = OUT / f"{PREFIX}_{MODEL_NAME}_raw_predictions{suffix}.csv"
+def run_raw_inference(idx, classes, condition, run_label, force=False):
+    tag = condition["tag"]
+    raw_path = AUGMENTATION_OUTPUT_DIR / f"{MODEL_NAME}_raw_predictions_{tag}_{run_label}.csv"
 
     if raw_path.exists() and not force:
         print(f"[SKIP] Raw predictions already exist: {raw_path}")
         return pd.read_csv(raw_path)
 
     print("=" * 100)
-    print("Running Model 2 inference once and saving pre-NMS detections")
+    print(f"Running inference for condition: {condition['display']}")
     print("=" * 100)
 
     detector = Detector(
@@ -187,12 +267,14 @@ def run_raw_inference_model2(idx, classes, suffix, force=False):
     start = time.time()
 
     for row_num, (_, row) in enumerate(idx.iterrows(), start=1):
-        image_path = ROOT / row["image_path"]
+        image_path = PROJECT_ROOT / row["image_path"]
         frame = cv2.imread(str(image_path))
 
         if frame is None:
             print(f"[WARN] Could not read image: {image_path}")
             continue
+
+        frame = apply_condition_to_image(frame, condition)
 
         outputs = detector.predict(frame)
         bboxes, class_ids, scores, class_scores = detector.post_process(outputs)
@@ -213,6 +295,9 @@ def run_raw_inference_model2(idx, classes, suffix, force=False):
 
             rows.append({
                 "model": MODEL_NAME,
+                "dataset": DATASET_NAME,
+                "augmentation_condition": tag,
+                "augmentation_display": condition["display"],
                 "image_file": row["image_file"],
                 "image_path": row["image_path"],
                 "bbox_x": float(bbox[0]),
@@ -230,7 +315,7 @@ def run_raw_inference_model2(idx, classes, suffix, force=False):
         if row_num % 250 == 0:
             elapsed = time.time() - start
             print(
-                f"[RAW] processed {row_num}/{len(idx)} images | "
+                f"[RAW {tag}] processed {row_num}/{len(idx)} images | "
                 f"raw detections={len(rows)} | elapsed={elapsed:.1f}s"
             )
 
@@ -244,21 +329,21 @@ def run_raw_inference_model2(idx, classes, suffix, force=False):
     return raw_df
 
 
-def apply_nms_threshold(raw_df, idx, classes, nms_threshold, suffix, force=False):
-    threshold_tag = str(nms_threshold).replace(".", "_")
-    pred_path = OUT / f"{PREFIX}_{MODEL_NAME}_predictions_nms_{threshold_tag}{suffix}.csv"
+def apply_fixed_nms(raw_df, idx, classes, condition, run_label, force=False):
+    tag = condition["tag"]
+    pred_path = AUGMENTATION_OUTPUT_DIR / f"{MODEL_NAME}_predictions_{tag}_nms_0_5_{run_label}.csv"
 
     if pred_path.exists() and not force:
         print(f"[SKIP] NMS predictions already exist: {pred_path}")
         return pd.read_csv(pred_path)
 
     print("=" * 100)
-    print(f"Applying assignment NMS module with threshold = {nms_threshold}")
+    print(f"Applying fixed NMS threshold = {NMS_THRESHOLD} for condition: {condition['display']}")
     print("=" * 100)
 
     nms = NMS(
         score_threshold=SCORE_THRESHOLD,
-        nms_iou_threshold=nms_threshold,
+        nms_iou_threshold=NMS_THRESHOLD,
     )
 
     raw_groups = {k: v for k, v in raw_df.groupby("image_file")} if len(raw_df) else {}
@@ -302,6 +387,9 @@ def apply_nms_threshold(raw_df, idx, classes, nms_threshold, suffix, force=False
 
             rows.append({
                 "model": MODEL_NAME,
+                "dataset": DATASET_NAME,
+                "augmentation_condition": tag,
+                "augmentation_display": condition["display"],
                 "image_file": row["image_file"],
                 "image_path": row["image_path"],
                 "bbox_x": float(bbox[0]),
@@ -314,11 +402,11 @@ def apply_nms_threshold(raw_df, idx, classes, nms_threshold, suffix, force=False
                 "predicted_class_score": predicted_class_score,
                 "combined_confidence": combined_confidence,
                 "class_scores_json": json.dumps(score_vector),
-                "nms_threshold": nms_threshold,
+                "nms_threshold": NMS_THRESHOLD,
             })
 
         if row_num % 1000 == 0:
-            print(f"[NMS {nms_threshold}] processed {row_num}/{len(idx)} images")
+            print(f"[NMS {tag}] processed {row_num}/{len(idx)} images")
 
     pred_df = pd.DataFrame(rows, columns=PRED_COLUMNS)
     pred_df.to_csv(pred_path, index=False)
@@ -368,7 +456,7 @@ def build_metric_lists(idx, pred_df, gt_df):
     return boxes, pred_classes, scores, cls_scores, gt_boxes, gt_classes
 
 
-def evaluate_with_metrics_py(idx, pred_df, gt_df, classes, nms_threshold):
+def evaluate_with_metrics_py(idx, pred_df, gt_df, classes, condition):
     boxes, pred_classes, scores, cls_scores, gt_boxes, gt_classes = build_metric_lists(
         idx,
         pred_df,
@@ -418,7 +506,8 @@ def evaluate_with_metrics_py(idx, pred_df, gt_df, classes, nms_threshold):
         per_class_rows.append({
             "model": MODEL_NAME,
             "dataset": DATASET_NAME,
-            "nms_threshold": nms_threshold,
+            "augmentation_condition": condition["tag"],
+            "augmentation_display": condition["display"],
             "class_id": class_id,
             "class_name": class_name,
             "ground_truth_count": gt_count,
@@ -429,12 +518,14 @@ def evaluate_with_metrics_py(idx, pred_df, gt_df, classes, nms_threshold):
     summary = {
         "model": MODEL_NAME,
         "dataset": DATASET_NAME,
-        "nms_threshold": nms_threshold,
+        "augmentation_condition": condition["tag"],
+        "augmentation_display": condition["display"],
         "mAP@0.5_11_point": map_score,
         "total_ground_truth": int(len(gt_df)),
         "total_predictions_after_nms": int(len(pred_df)),
         "evaluation_rows": int(len(y_true)),
         "score_threshold": SCORE_THRESHOLD,
+        "nms_threshold": NMS_THRESHOLD,
         "map_iou_threshold": MAP_IOU_THRESHOLD,
         "eval_type": EVAL_TYPE,
     }
@@ -442,179 +533,108 @@ def evaluate_with_metrics_py(idx, pred_df, gt_df, classes, nms_threshold):
     return summary, pd.DataFrame(per_class_rows)
 
 
-def count_duplicate_like_prediction_pairs(pred_df, iou_threshold=0.5):
-    """
-    Counts same-class post-NMS prediction pairs with IoU greater than iou_threshold.
-
-    This is a duplicate-like detection proxy. It is not AP/mAP.
-    """
-    if len(pred_df) == 0:
-        return {
-            "duplicate_like_pairs_iou_gt_0_5": 0,
-            "images_with_duplicate_like_pairs": 0,
-            "mean_duplicate_like_pairs_per_image": 0.0,
-        }
-
-    duplicate_pairs_total = 0
-    images_with_duplicates = 0
-
-    for _, image_group in pred_df.groupby("image_file"):
-        image_pair_count = 0
-
-        for _, class_group in image_group.groupby("class_id"):
-            boxes = class_group[["bbox_x", "bbox_y", "bbox_w", "bbox_h"]].astype(float).values.tolist()
-
-            if len(boxes) < 2:
-                continue
-
-            for i in range(len(boxes)):
-                for j in range(i + 1, len(boxes)):
-                    iou = float(calculate_iou(boxes[i], boxes[j]))
-                    iou = min(1.0, max(0.0, iou))
-
-                    if iou > iou_threshold:
-                        image_pair_count += 1
-
-        duplicate_pairs_total += image_pair_count
-
-        if image_pair_count > 0:
-            images_with_duplicates += 1
-
-    total_images = pred_df["image_file"].nunique()
-
-    return {
-        "duplicate_like_pairs_iou_gt_0_5": int(duplicate_pairs_total),
-        "images_with_duplicate_like_pairs": int(images_with_duplicates),
-        "mean_duplicate_like_pairs_per_image": (
-            float(duplicate_pairs_total) / float(total_images)
-            if total_images > 0 else 0.0
-        ),
-    }
-
-
-def build_subset_indices(idx):
-    """
-    Builds the two Task 3 evaluation groups:
-    - all_selected
-    - crowded_any_overlap
-
-    crowded_any_overlap uses Task 2 ground-truth overlap profiling:
-    images with at least one ground-truth box pair where IoU > 0.1.
-    """
-    subsets = {
-        "all_selected": idx.copy(),
-    }
-
-    if not OVERLAP_PROFILE.exists():
-        print(f"[WARN] Missing overlap profile: {OVERLAP_PROFILE}")
-        print("[WARN] Only all_selected subset will be evaluated.")
-        return subsets
-
-    overlap_df = pd.read_csv(OVERLAP_PROFILE)
-
-    selected_image_files = set(idx["image_file"])
-    crowded_files = set(
-        overlap_df[
-            (overlap_df["image_file"].isin(selected_image_files))
-            & (overlap_df["pairs_iou_gt_0_1"] > 0)
-        ]["image_file"]
+def add_change_from_original(summary_df, per_class_df):
+    original_map = float(
+        summary_df.loc[
+            summary_df["augmentation_condition"] == "original",
+            "mAP@0.5_11_point"
+        ].iloc[0]
     )
 
-    crowded_idx = idx[idx["image_file"].isin(crowded_files)].copy()
-
-    subsets["crowded_any_overlap"] = crowded_idx
-
-    print()
-    print("TASK 3 SUBSETS")
-    print(f"all_selected images: {len(subsets['all_selected'])}")
-    print(f"crowded_any_overlap images: {len(subsets['crowded_any_overlap'])}")
-
-    return subsets
-
-
-def evaluate_subset_summary(subset_name, subset_idx, pred_df, gt_df, classes, nms_threshold):
-    subset_files = set(subset_idx["image_file"])
-
-    subset_pred = pred_df[pred_df["image_file"].isin(subset_files)].copy()
-    subset_gt = gt_df[gt_df["image_file"].isin(subset_files)].copy()
-
-    summary, _ = evaluate_with_metrics_py(
-        subset_idx,
-        subset_pred,
-        subset_gt,
-        classes,
-        nms_threshold=nms_threshold,
+    original_predictions = int(
+        summary_df.loc[
+            summary_df["augmentation_condition"] == "original",
+            "total_predictions_after_nms"
+        ].iloc[0]
     )
 
-    duplicate_stats = count_duplicate_like_prediction_pairs(
-        subset_pred,
-        iou_threshold=0.5,
+    summary_df = summary_df.copy()
+    summary_df["mAP_change_vs_original"] = summary_df["mAP@0.5_11_point"] - original_map
+    summary_df["mAP_percent_change_vs_original"] = (
+        summary_df["mAP_change_vs_original"] / original_map * 100
+        if original_map != 0 else 0.0
+    )
+    summary_df["prediction_change_vs_original"] = (
+        summary_df["total_predictions_after_nms"] - original_predictions
     )
 
-    return {
-        "subset_name": subset_name,
-        "image_count": int(len(subset_idx)),
-        "ground_truth_count": int(len(subset_gt)),
-        "nms_threshold": nms_threshold,
-        "mAP@0.5_11_point": summary["mAP@0.5_11_point"],
-        "total_predictions_after_nms": int(len(subset_pred)),
-        "evaluation_rows": summary["evaluation_rows"],
-        "duplicate_like_pairs_iou_gt_0_5": duplicate_stats["duplicate_like_pairs_iou_gt_0_5"],
-        "images_with_duplicate_like_pairs": duplicate_stats["images_with_duplicate_like_pairs"],
-        "mean_duplicate_like_pairs_per_image": duplicate_stats["mean_duplicate_like_pairs_per_image"],
-    }
+    original_ap = (
+        per_class_df[per_class_df["augmentation_condition"] == "original"]
+        [["class_id", "ap_11_point"]]
+        .rename(columns={"ap_11_point": "original_ap_11_point"})
+    )
+
+    per_class_df = per_class_df.merge(original_ap, on="class_id", how="left")
+    per_class_df["ap_change_vs_original"] = (
+        per_class_df["ap_11_point"] - per_class_df["original_ap_11_point"]
+    )
+
+    return summary_df, per_class_df
 
 
-def build_figures(summary_df, duplicate_df, subset_summary_df, suffix):
-    plt.figure(figsize=(8, 5))
-    plt.plot(summary_df["nms_threshold"], summary_df["mAP@0.5_11_point"], marker="o")
-    plt.xlabel("NMS IoU threshold")
+def build_figures(summary_df, per_class_df):
+    ordered = summary_df.copy()
+    condition_order = [c["tag"] for c in CONDITIONS]
+    display_order = [c["display"] for c in CONDITIONS]
+    order_map = {tag: i for i, tag in enumerate(condition_order)}
+    ordered["condition_order"] = ordered["augmentation_condition"].map(order_map)
+    ordered = ordered.sort_values("condition_order")
+
+    plt.figure(figsize=(9, 5))
+    plt.bar(ordered["augmentation_display"], ordered["mAP@0.5_11_point"])
+    plt.xlabel("Image condition")
     plt.ylabel("mAP@0.5, 11-point interpolated")
-    plt.title("Task 3: mAP@0.5 by NMS threshold")
+    plt.title("mAP@0.5 by image condition")
+    plt.xticks(rotation=25, ha="right")
     plt.tight_layout()
-    fig1 = FIG / f"{PREFIX}_map_by_nms_threshold{suffix}.png"
+    fig1 = FIGURE_DIR / "02_map_by_condition.png"
     plt.savefig(fig1, dpi=200, bbox_inches="tight")
     plt.close()
 
-    plt.figure(figsize=(8, 5))
-    plt.plot(summary_df["nms_threshold"], summary_df["total_predictions_after_nms"], marker="o")
-    plt.xlabel("NMS IoU threshold")
-    plt.ylabel("Predictions after NMS")
-    plt.title("Task 3: Prediction count by NMS threshold")
+    drop_df = ordered[ordered["augmentation_condition"] != "original"].copy()
+    drop_df["mAP_drop_vs_original"] = -drop_df["mAP_change_vs_original"]
+
+    plt.figure(figsize=(9, 5))
+    plt.bar(drop_df["augmentation_display"], drop_df["mAP_drop_vs_original"])
+    plt.xlabel("Image condition")
+    plt.ylabel("mAP@0.5 drop vs original")
+    plt.title("Robustness degradation under image augmentations")
+    plt.xticks(rotation=25, ha="right")
     plt.tight_layout()
-    fig2 = FIG / f"{PREFIX}_prediction_count_by_nms_threshold{suffix}.png"
+    fig2 = FIGURE_DIR / "03_map_drop_vs_baseline.png"
     plt.savefig(fig2, dpi=200, bbox_inches="tight")
     plt.close()
 
-    plt.figure(figsize=(8, 5))
-    plt.plot(
-        duplicate_df["nms_threshold"],
-        duplicate_df["duplicate_like_pairs_iou_gt_0_5"],
-        marker="o",
-    )
-    plt.xlabel("NMS IoU threshold")
-    plt.ylabel("Same-class prediction pairs with IoU > 0.5")
-    plt.title("Task 3: Duplicate-like prediction pairs by NMS threshold")
+    plt.figure(figsize=(9, 5))
+    plt.bar(ordered["augmentation_display"], ordered["total_predictions_after_nms"])
+    plt.xlabel("Image condition")
+    plt.ylabel("Predictions retained after NMS")
+    plt.title("Post-NMS prediction count by augmentation condition")
+    plt.xticks(rotation=25, ha="right")
     plt.tight_layout()
-    fig3 = FIG / f"{PREFIX}_duplicate_like_pairs_by_nms_threshold{suffix}.png"
+    fig3 = FIGURE_DIR / "04_prediction_count_by_condition.png"
     plt.savefig(fig3, dpi=200, bbox_inches="tight")
     plt.close()
 
-    plt.figure(figsize=(8, 5))
-    for subset_name, group in subset_summary_df.groupby("subset_name"):
-        group = group.sort_values("nms_threshold")
-        plt.plot(
-            group["nms_threshold"],
-            group["mAP@0.5_11_point"],
-            marker="o",
-            label=subset_name,
-        )
-    plt.xlabel("NMS IoU threshold")
-    plt.ylabel("mAP@0.5, 11-point interpolated")
-    plt.title("Task 3: mAP@0.5 by NMS threshold and subset")
-    plt.legend()
+    non_original = per_class_df[per_class_df["augmentation_condition"] != "original"].copy()
+    non_original["ap_drop_vs_original"] = -non_original["ap_change_vs_original"]
+
+    top_drops = (
+        non_original
+        .sort_values("ap_drop_vs_original", ascending=False)
+        .head(12)
+        .copy()
+    )
+    top_drops["label"] = top_drops["augmentation_display"] + " / " + top_drops["class_name"]
+    plot_df = top_drops.sort_values("ap_drop_vs_original", ascending=True)
+
+    plt.figure(figsize=(10, 6))
+    plt.barh(plot_df["label"], plot_df["ap_drop_vs_original"])
+    plt.xlabel("AP@0.5 drop vs original")
+    plt.ylabel("Augmentation / class")
+    plt.title("Largest per-class AP drops under augmentation")
     plt.tight_layout()
-    fig4 = FIG / f"{PREFIX}_map_by_nms_threshold_and_subset{suffix}.png"
+    fig4 = FIGURE_DIR / "05_largest_per_class_ap_drops.png"
     plt.savefig(fig4, dpi=200, bbox_inches="tight")
     plt.close()
 
@@ -633,7 +653,7 @@ def main():
     if not SAMPLE_INDEX.exists():
         raise FileNotFoundError(
             f"Missing selected sample index: {SAMPLE_INDEX}. "
-            "Run Task 2 sampling first."
+            "Run experiments/scripts/02_dataset_sampling.py first."
         )
 
     classes = load_classes()
@@ -641,38 +661,47 @@ def main():
 
     if args.max_images is not None:
         idx = idx.head(args.max_images).copy()
-        suffix = f"_first_{args.max_images}"
-        print(f"[INFO] Running Task 3 on first {args.max_images} selected sample images.")
+        run_label = f"first_{args.max_images}"
+        print(f"[INFO] Running augmentation robustness sweep on first {args.max_images} selected sample images.")
     else:
-        suffix = "_selected_sample"
-        print("[INFO] Running Task 3 on full selected 5,000-image sample.")
+        run_label = "sample5000"
+        print("[INFO] Running augmentation robustness sweep on full selected 5,000-image sample.")
 
     print(f"[INFO] Images selected: {len(idx)}")
     print(f"[INFO] Classes: {len(classes)}")
     print(f"[INFO] Model held constant: {MODEL_NAME}")
     print(f"[INFO] Dataset held constant: {DATASET_NAME}")
     print(f"[INFO] Score threshold held constant: {SCORE_THRESHOLD}")
+    print(f"[INFO] NMS threshold held constant: {NMS_THRESHOLD}")
     print(f"[INFO] Evaluation IoU threshold held constant: {MAP_IOU_THRESHOLD}")
-    print(f"[INFO] NMS thresholds tested: {NMS_THRESHOLDS}")
-    print(f"[INFO] Output prefix: {PREFIX}_")
-
-    subsets = build_subset_indices(idx)
-
-    gt_df = build_ground_truth(idx, classes, suffix=suffix, force=args.force)
-    raw_df = run_raw_inference_model2(idx, classes, suffix=suffix, force=args.force)
+    print(f"[INFO] Augmentation conditions tested: {[c['tag'] for c in CONDITIONS]}")
 
     summary_rows = []
     per_class_all = []
-    duplicate_rows = []
-    subset_rows = []
 
-    for nms_threshold in NMS_THRESHOLDS:
-        pred_df = apply_nms_threshold(
+    for condition in CONDITIONS:
+        gt_df = build_ground_truth(
+            idx,
+            classes,
+            condition,
+            run_label=run_label,
+            force=args.force,
+        )
+
+        raw_df = run_raw_inference(
+            idx,
+            classes,
+            condition,
+            run_label=run_label,
+            force=args.force,
+        )
+
+        pred_df = apply_fixed_nms(
             raw_df,
             idx,
             classes,
-            nms_threshold=nms_threshold,
-            suffix=suffix,
+            condition,
+            run_label=run_label,
             force=args.force,
         )
 
@@ -681,66 +710,41 @@ def main():
             pred_df,
             gt_df,
             classes,
-            nms_threshold=nms_threshold,
+            condition,
         )
-
-        duplicate_stats = count_duplicate_like_prediction_pairs(
-            pred_df,
-            iou_threshold=0.5,
-        )
-        duplicate_stats["nms_threshold"] = nms_threshold
-        duplicate_stats["total_predictions_after_nms"] = int(len(pred_df))
 
         summary_rows.append(summary)
         per_class_all.append(per_class_df)
-        duplicate_rows.append(duplicate_stats)
-
-        for subset_name, subset_idx in subsets.items():
-            subset_rows.append(
-                evaluate_subset_summary(
-                    subset_name,
-                    subset_idx,
-                    pred_df,
-                    gt_df,
-                    classes,
-                    nms_threshold=nms_threshold,
-                )
-            )
 
     summary_df = pd.DataFrame(summary_rows)
     per_class_df = pd.concat(per_class_all, axis=0, ignore_index=True)
-    duplicate_df = pd.DataFrame(duplicate_rows)
-    subset_summary_df = pd.DataFrame(subset_rows)
 
-    summary_path = OUT / f"{PREFIX}_nms_threshold_summary{suffix}.csv"
-    per_class_path = OUT / f"{PREFIX}_per_class_ap_by_nms_threshold{suffix}.csv"
-    duplicate_path = OUT / f"{PREFIX}_duplicate_summary_by_nms_threshold{suffix}.csv"
-    subset_path = OUT / f"{PREFIX}_subset_summary_by_nms_threshold{suffix}.csv"
+    summary_df, per_class_df = add_change_from_original(summary_df, per_class_df)
+
+    summary_path = AUGMENTATION_OUTPUT_DIR / f"summary_by_condition_{run_label}.csv"
+    per_class_path = AUGMENTATION_OUTPUT_DIR / f"per_class_ap_by_condition_{run_label}.csv"
 
     summary_df.to_csv(summary_path, index=False)
     per_class_df.to_csv(per_class_path, index=False)
-    duplicate_df.to_csv(duplicate_path, index=False)
-    subset_summary_df.to_csv(subset_path, index=False)
 
     print()
-    print("TASK 3 NMS THRESHOLD SUMMARY")
+    print("AUGMENTATION ROBUSTNESS SUMMARY")
     print(summary_df.to_string(index=False))
 
     print()
-    print("TASK 3 DUPLICATE-LIKE PREDICTION SUMMARY")
-    print(duplicate_df.to_string(index=False))
-
-    print()
-    print("TASK 3 SUBSET SUMMARY")
-    print(subset_summary_df.to_string(index=False))
+    print("LARGEST PER-CLASS AP DROPS")
+    print(
+        per_class_df[per_class_df["augmentation_condition"] != "original"]
+        .sort_values("ap_change_vs_original")
+        .head(15)
+        .to_string(index=False)
+    )
 
     print()
     print("[WRITE]", summary_path)
     print("[WRITE]", per_class_path)
-    print("[WRITE]", duplicate_path)
-    print("[WRITE]", subset_path)
 
-    build_figures(summary_df, duplicate_df, subset_summary_df, suffix=suffix)
+    build_figures(summary_df, per_class_df)
 
 
 if __name__ == "__main__":

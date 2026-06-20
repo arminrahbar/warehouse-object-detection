@@ -6,3 +6,7 @@ __pycache__/
 .env
 .DS_Store
 scratch/
+experiments/notebooks/
+experiments/reports/
+experiments/outputs/
+notebook_text_exports/

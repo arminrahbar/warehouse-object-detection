@@ -1,24 +1,34 @@
 from pathlib import Path
 import sys
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+
+OUTPUT_DIR = EXPERIMENTS_DIR / "outputs"
+SAMPLING_OUTPUT_DIR = OUTPUT_DIR / "dataset_sampling"
+FIGURE_DIR = EXPERIMENTS_DIR / "figures" / "02_dataset_sampling"
+
+SAMPLING_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from techtrack.modules.utils.metrics import calculate_iou
 
-OUT = ROOT / "analysis" / "outputs"
-FIG = ROOT / "analysis" / "figures"
-FIG.mkdir(parents=True, exist_ok=True)
+
+DATASET_INDEX = OUTPUT_DIR / "dataset_index.csv"
+SELECTED_SAMPLE_INDEX = SAMPLING_OUTPUT_DIR / "selected_sample_index.csv"
 
 
 def yolo_to_xywh(cx, cy, w, h):
     """
     Convert YOLO normalized center-format boxes into top-left xywh format.
-    This matches the box format used by metrics.py in the Task 1 evaluation pipeline.
+    This matches the box format used by the model evaluation pipeline.
     """
     x = cx - w / 2
     y = cy - h / 2
@@ -111,13 +121,25 @@ def crowding_distribution(df, label):
 
 
 def main():
-    idx = pd.read_csv(OUT / "task2_dataset_index.csv")
-    selected = pd.read_csv(OUT / "task2_selected_sample_index.csv")
+    if not DATASET_INDEX.exists():
+        raise FileNotFoundError(
+            f"Dataset index not found: {DATASET_INDEX}. "
+            "Run experiments/scripts/02_build_dataset_index.py first."
+        )
+
+    if not SELECTED_SAMPLE_INDEX.exists():
+        raise FileNotFoundError(
+            f"Selected sample index not found: {SELECTED_SAMPLE_INDEX}. "
+            "Run experiments/scripts/02_dataset_sampling.py first."
+        )
+
+    idx = pd.read_csv(DATASET_INDEX)
+    selected = pd.read_csv(SELECTED_SAMPLE_INDEX)
 
     rows = []
 
     for row_num, row in idx.iterrows():
-        label_path = ROOT / row["label_path"]
+        label_path = PROJECT_ROOT / row["label_path"]
         metrics = compute_overlap_for_label(label_path)
 
         rows.append({
@@ -134,22 +156,24 @@ def main():
     overlap = pd.DataFrame(rows)
     overlap["crowding_bucket"] = overlap["pairs_iou_gt_0_1"].apply(crowding_bucket)
 
-    overlap_path = OUT / "task2_image_overlap_profile.csv"
+    overlap_path = SAMPLING_OUTPUT_DIR / "overlap_profile.csv"
     overlap.to_csv(overlap_path, index=False)
 
     selected_files = set(selected["image_file"])
     selected_overlap = overlap[overlap["image_file"].isin(selected_files)].copy()
 
+    selected_name = "rare_aware_density_stratified_5000"
+
     summary = pd.DataFrame([
         summarize_overlap(overlap, "full_dataset"),
-        summarize_overlap(selected_overlap, "rare_aware_density_stratified_5000"),
+        summarize_overlap(selected_overlap, selected_name),
     ])
 
-    summary_path = OUT / "task2_full_vs_selected_overlap_summary.csv"
+    summary_path = SAMPLING_OUTPUT_DIR / "overlap_summary.csv"
     summary.to_csv(summary_path, index=False)
 
     full_crowding = crowding_distribution(overlap, "full_dataset")
-    selected_crowding = crowding_distribution(selected_overlap, "rare_aware_density_stratified_5000")
+    selected_crowding = crowding_distribution(selected_overlap, selected_name)
 
     crowding_compare = full_crowding.merge(
         selected_crowding,
@@ -161,7 +185,7 @@ def main():
         crowding_compare["image_share_pct_sample"] - crowding_compare["image_share_pct_full"]
     )
 
-    crowding_path = OUT / "task2_full_vs_selected_crowding_distribution.csv"
+    crowding_path = SAMPLING_OUTPUT_DIR / "crowding_distribution_comparison.csv"
     crowding_compare.to_csv(crowding_path, index=False)
 
     x = np.arange(len(crowding_compare))
@@ -173,11 +197,11 @@ def main():
     plt.xticks(x, crowding_compare["crowding_bucket"])
     plt.xlabel("Box-pair overlap bucket: number of pairs with IoU > 0.1")
     plt.ylabel("Image share (%)")
-    plt.title("Task 2: Full dataset vs selected sample crowding distribution")
+    plt.title("Full dataset vs selected sample crowding distribution")
     plt.legend()
     plt.tight_layout()
 
-    figure_path = FIG / "task2_crowding_distribution_full_vs_selected_sample.png"
+    figure_path = FIGURE_DIR / "04_crowding_distribution.png"
     plt.savefig(figure_path, dpi=200, bbox_inches="tight")
     plt.close()
 

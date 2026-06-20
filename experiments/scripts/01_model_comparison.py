@@ -8,8 +8,13 @@ import cv2
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+OUTPUT_DIR = EXPERIMENTS_DIR / "outputs"
+MODEL_SELECTION_DIR = OUTPUT_DIR / "model_selection"
+MODEL_SELECTION_DIR.mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from techtrack.modules.inference.model import Detector
 from techtrack.modules.inference.nms import NMS
@@ -19,11 +24,9 @@ from techtrack.modules.utils.metrics import (
     calculate_map_x_point_interpolated,
 )
 
-OUT = ROOT / "analysis" / "outputs"
-OUT.mkdir(parents=True, exist_ok=True)
 
-DATASET_INDEX = OUT / "dataset_index.csv"
-CLASS_FILE = ROOT / "techtrack" / "storage" / "yolo_model_1" / "logistics.names"
+DATASET_INDEX = OUTPUT_DIR / "dataset_index.csv"
+CLASS_FILE = PROJECT_ROOT / "techtrack" / "storage" / "yolo_model_1" / "logistics.names"
 
 SCORE_THRESHOLD = 0.5
 NMS_THRESHOLD = 0.4
@@ -32,14 +35,14 @@ EVAL_TYPE = "combined"
 
 MODELS = {
     "model1": {
-        "weights": ROOT / "techtrack/storage/yolo_model_1/yolov4-tiny-logistics_size_416_1.weights",
-        "cfg": ROOT / "techtrack/storage/yolo_model_1/yolov4-tiny-logistics_size_416_1.cfg",
-        "names": ROOT / "techtrack/storage/yolo_model_1/logistics.names",
+        "weights": PROJECT_ROOT / "techtrack/storage/yolo_model_1/yolov4-tiny-logistics_size_416_1.weights",
+        "cfg": PROJECT_ROOT / "techtrack/storage/yolo_model_1/yolov4-tiny-logistics_size_416_1.cfg",
+        "names": PROJECT_ROOT / "techtrack/storage/yolo_model_1/logistics.names",
     },
     "model2": {
-        "weights": ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.weights",
-        "cfg": ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.cfg",
-        "names": ROOT / "techtrack/storage/yolo_model_2/logistics.names",
+        "weights": PROJECT_ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.weights",
+        "cfg": PROJECT_ROOT / "techtrack/storage/yolo_model_2/yolov4-tiny-logistics_size_416_2.cfg",
+        "names": PROJECT_ROOT / "techtrack/storage/yolo_model_2/logistics.names",
     },
 }
 
@@ -112,8 +115,8 @@ def yolo_label_to_xywh(label_path: Path, image_w: int, image_h: int, classes):
     return rows
 
 
-def build_ground_truth(idx, classes, suffix, force=False):
-    gt_path = OUT / f"task1_ground_truth{suffix}.csv"
+def build_ground_truth(idx, classes, run_label, force=False):
+    gt_path = MODEL_SELECTION_DIR / f"ground_truth_{run_label}.csv"
 
     if gt_path.exists() and not force:
         print(f"[SKIP] Ground truth already exists: {gt_path}")
@@ -126,12 +129,12 @@ def build_ground_truth(idx, classes, suffix, force=False):
     rows = []
 
     for row_num, (_, row) in enumerate(idx.iterrows(), start=1):
-        image_path = ROOT / row["image_path"]
-        label_path = ROOT / row["label_path"]
+        image_path = PROJECT_ROOT / row["image_path"]
+        label_path = PROJECT_ROOT / row["label_path"]
 
         frame = cv2.imread(str(image_path))
         if frame is None:
-            print(f"[WARN] Could not read image for GT conversion: {image_path}")
+            print(f"[WARN] Could not read image for ground-truth conversion: {image_path}")
             continue
 
         image_h, image_w = frame.shape[:2]
@@ -158,8 +161,8 @@ def build_ground_truth(idx, classes, suffix, force=False):
     return gt_df
 
 
-def run_inference_for_model(model_name, paths, idx, classes, suffix, force=False):
-    pred_path = OUT / f"task1_{model_name}_predictions{suffix}.csv"
+def run_inference_for_model(model_name, paths, idx, classes, run_label, force=False):
+    pred_path = MODEL_SELECTION_DIR / f"{model_name}_predictions_{run_label}.csv"
 
     if pred_path.exists() and not force:
         print(f"[SKIP] Predictions already exist: {pred_path}")
@@ -185,7 +188,7 @@ def run_inference_for_model(model_name, paths, idx, classes, suffix, force=False
     start = time.time()
 
     for row_num, (_, row) in enumerate(idx.iterrows(), start=1):
-        image_path = ROOT / row["image_path"]
+        image_path = PROJECT_ROOT / row["image_path"]
         frame = cv2.imread(str(image_path))
 
         if frame is None:
@@ -328,7 +331,6 @@ def evaluate_with_metrics_py(model_name, idx, pred_df, gt_df, classes):
     per_class_rows = []
 
     for class_id, class_name in enumerate(classes):
-        # Per-class AP using the same mAP function by remapping this class to class 0.
         per_class_ap = calculate_map_x_point_interpolated(
             {0: precision_recall_points[class_id]},
             num_classes=1,
@@ -370,21 +372,27 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
+    if not DATASET_INDEX.exists():
+        raise FileNotFoundError(
+            f"Dataset index not found: {DATASET_INDEX}. "
+            "Run experiments/scripts/02_build_dataset_index.py first."
+        )
+
     classes = load_classes()
     idx = pd.read_csv(DATASET_INDEX)
 
     if args.max_images is not None:
         idx = idx.head(args.max_images).copy()
-        suffix = f"_first_{args.max_images}"
-        print(f"[INFO] Running Task 1 on first {args.max_images} images.")
+        run_label = f"first_{args.max_images}"
+        print(f"[INFO] Running model comparison on first {args.max_images} images.")
     else:
-        suffix = "_full"
-        print("[INFO] Running Task 1 on full dataset.")
+        run_label = "full"
+        print("[INFO] Running model comparison on full dataset.")
 
     print(f"[INFO] Images selected: {len(idx)}")
     print(f"[INFO] Classes: {len(classes)}")
 
-    gt_df = build_ground_truth(idx, classes, suffix=suffix, force=args.force)
+    gt_df = build_ground_truth(idx, classes, run_label=run_label, force=args.force)
 
     summaries = []
     per_class_all = []
@@ -395,7 +403,7 @@ def main():
             paths,
             idx,
             classes,
-            suffix=suffix,
+            run_label=run_label,
             force=args.force,
         )
 
@@ -437,16 +445,16 @@ def main():
         ),
     )
 
-    summary_path = OUT / f"task1_model_summary{suffix}.csv"
-    per_class_path = OUT / f"task1_per_class_metrics{suffix}.csv"
-    comparison_path = OUT / f"task1_per_class_ap_comparison{suffix}.csv"
+    summary_path = MODEL_SELECTION_DIR / f"model_summary_{run_label}.csv"
+    per_class_path = MODEL_SELECTION_DIR / f"per_class_metrics_{run_label}.csv"
+    comparison_path = MODEL_SELECTION_DIR / f"per_class_ap_comparison_{run_label}.csv"
 
     summary_df.to_csv(summary_path, index=False)
     per_class_df.to_csv(per_class_path, index=False)
     comparison.to_csv(comparison_path, index=False)
 
     print()
-    print("TASK 1 MODEL SUMMARY")
+    print("MODEL SELECTION SUMMARY")
     print(summary_df.to_string(index=False))
 
     print()

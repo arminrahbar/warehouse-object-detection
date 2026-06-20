@@ -1,20 +1,29 @@
 from pathlib import Path
 import re
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "analysis" / "outputs"
-FIG = ROOT / "analysis" / "figures"
-FIG.mkdir(parents=True, exist_ok=True)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+
+OUTPUT_DIR = EXPERIMENTS_DIR / "outputs"
+SAMPLING_OUTPUT_DIR = OUTPUT_DIR / "dataset_sampling"
+FIGURE_DIR = EXPERIMENTS_DIR / "figures" / "02_dataset_sampling"
+
+SAMPLING_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+
+DATASET_INDEX = OUTPUT_DIR / "dataset_index.csv"
+CLASS_DISTRIBUTION = OUTPUT_DIR / "class_distribution.csv"
 
 SAMPLE_SIZE = 5000
 RANDOM_SEED = 42
 
 
-def clean_col(name: str) -> str:
+def clean_column_name(name: str) -> str:
     name = name.lower()
     name = re.sub(r"[^a-z0-9]+", "_", name)
     return name.strip("_")
@@ -52,7 +61,12 @@ def proportional_sample(df: pd.DataFrame, group_col: str, n: int, seed: int) -> 
         group_df = df[df[group_col] == group]
         group_n = min(int(group_n), len(group_df))
         if group_n > 0:
-            sampled.append(group_df.sample(n=group_n, random_state=int(rng.integers(0, 1_000_000))))
+            sampled.append(
+                group_df.sample(
+                    n=group_n,
+                    random_state=int(rng.integers(0, 1_000_000)),
+                )
+            )
 
     sample = pd.concat(sampled, axis=0)
 
@@ -61,7 +75,10 @@ def proportional_sample(df: pd.DataFrame, group_col: str, n: int, seed: int) -> 
         fill_n = min(n - len(sample), len(remaining))
         sample = pd.concat([
             sample,
-            remaining.sample(n=fill_n, random_state=int(rng.integers(0, 1_000_000)))
+            remaining.sample(
+                n=fill_n,
+                random_state=int(rng.integers(0, 1_000_000)),
+            ),
         ])
 
     if len(sample) > n:
@@ -70,14 +87,14 @@ def proportional_sample(df: pd.DataFrame, group_col: str, n: int, seed: int) -> 
     return sample
 
 
-def class_distribution(df: pd.DataFrame, cls: pd.DataFrame, label: str) -> pd.DataFrame:
+def class_distribution(df: pd.DataFrame, classes_df: pd.DataFrame, label: str) -> pd.DataFrame:
     total_objects = int(df["num_objects"].sum())
     total_images = len(df)
     rows = []
 
-    for _, row in cls.iterrows():
+    for _, row in classes_df.iterrows():
         class_name = row["class_name"]
-        col = f"count_{clean_col(class_name)}"
+        col = f"count_{clean_column_name(class_name)}"
 
         object_count = int(df[col].sum())
         image_count = int((df[col] > 0).sum())
@@ -122,11 +139,9 @@ def dataset_summary(df: pd.DataFrame, label: str) -> dict:
     }
 
 
-def rare_class_targets(cls: pd.DataFrame, sample_fraction: float) -> pd.DataFrame:
-    rare = cls.sort_values("object_count", ascending=True).head(8).copy()
+def rare_class_targets(classes_df: pd.DataFrame, sample_fraction: float) -> pd.DataFrame:
+    rare = classes_df.sort_values("object_count", ascending=True).head(8).copy()
 
-    # Target is roughly proportional to the sample size, with a small floor.
-    # This protects rare classes without forcing 100% retention or badly distorting the distribution.
     rare["target_image_count"] = rare["image_count"].apply(
         lambda x: min(int(x), max(int(np.ceil(x * sample_fraction)), min(100, int(x))))
     )
@@ -137,16 +152,16 @@ def rare_class_targets(cls: pd.DataFrame, sample_fraction: float) -> pd.DataFram
 def enforce_rare_class_targets(
     base_sample: pd.DataFrame,
     full_df: pd.DataFrame,
-    rare_targets: pd.DataFrame,
+    rare_targets_df: pd.DataFrame,
     seed: int,
 ) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     sample = base_sample.copy()
 
-    for _, row in rare_targets.iterrows():
+    for _, row in rare_targets_df.iterrows():
         class_name = row["class_name"]
         target = int(row["target_image_count"])
-        col = f"count_{clean_col(class_name)}"
+        col = f"count_{clean_column_name(class_name)}"
 
         current = int((sample[col] > 0).sum())
         needed = target - current
@@ -167,9 +182,8 @@ def enforce_rare_class_targets(
 
     sample = sample.drop_duplicates(subset=["image_path"], keep="first").copy()
 
-    # Trim back to SAMPLE_SIZE by removing non-rare images first.
     if len(sample) > SAMPLE_SIZE:
-        rare_cols = [f"count_{clean_col(c)}" for c in rare_targets["class_name"].tolist()]
+        rare_cols = [f"count_{clean_column_name(c)}" for c in rare_targets_df["class_name"].tolist()]
         sample = sample.copy()
         sample["_rare_object_count"] = sample[rare_cols].sum(axis=1)
 
@@ -188,7 +202,6 @@ def enforce_rare_class_targets(
 
         sample = sample.drop(columns=["_rare_object_count"], errors="ignore")
 
-    # Fill if short, using only unused images.
     if len(sample) < SAMPLE_SIZE:
         selected_paths = set(sample["image_path"])
         remaining = full_df[~full_df["image_path"].isin(selected_paths)]
@@ -206,14 +219,20 @@ def enforce_rare_class_targets(
     return sample.sort_values("image_file").reset_index(drop=True)
 
 
-def compare_sample(full_df: pd.DataFrame, sample_df: pd.DataFrame, cls: pd.DataFrame, name: str, rare_targets: pd.DataFrame) -> dict:
-    full_class = class_distribution(full_df, cls, "full")
-    sample_class = class_distribution(sample_df, cls, name)
+def compare_sample(
+    full_df: pd.DataFrame,
+    sample_df: pd.DataFrame,
+    classes_df: pd.DataFrame,
+    name: str,
+    rare_targets_df: pd.DataFrame,
+) -> dict:
+    full_class = class_distribution(full_df, classes_df, "full")
+    sample_class = class_distribution(sample_df, classes_df, name)
 
     class_cmp = full_class.merge(
         sample_class,
         on=["class_id", "class_name"],
-        suffixes=("_full", "_sample")
+        suffixes=("_full", "_sample"),
     )
 
     class_cmp["object_share_abs_error_pp"] = (
@@ -226,14 +245,14 @@ def compare_sample(full_df: pd.DataFrame, sample_df: pd.DataFrame, cls: pd.DataF
     density_cmp = full_density.merge(
         sample_density,
         on="density_bucket",
-        suffixes=("_full", "_sample")
+        suffixes=("_full", "_sample"),
     )
 
     density_cmp["image_share_abs_error_pp"] = (
         density_cmp["image_share_pct_sample"] - density_cmp["image_share_pct_full"]
     ).abs()
 
-    rare_cmp = class_cmp[class_cmp["class_name"].isin(rare_targets["class_name"])].copy()
+    rare_cmp = class_cmp[class_cmp["class_name"].isin(rare_targets_df["class_name"])].copy()
     rare_cmp["rare_image_retention_pct"] = (
         100 * rare_cmp["image_count_sample"] / rare_cmp["image_count_full"]
     )
@@ -254,14 +273,27 @@ def compare_sample(full_df: pd.DataFrame, sample_df: pd.DataFrame, cls: pd.DataF
 
 
 def main():
-    idx = pd.read_csv(OUT / "task2_dataset_index.csv")
-    cls = pd.read_csv(OUT / "task2_class_distribution_full.csv")
+    if not DATASET_INDEX.exists():
+        raise FileNotFoundError(
+            f"Dataset index not found: {DATASET_INDEX}. "
+            "Run experiments/scripts/02_build_dataset_index.py first."
+        )
+
+    if not CLASS_DISTRIBUTION.exists():
+        raise FileNotFoundError(
+            f"Class distribution not found: {CLASS_DISTRIBUTION}. "
+            "Run experiments/scripts/02_build_dataset_index.py first."
+        )
+
+    idx = pd.read_csv(DATASET_INDEX)
+    classes_df = pd.read_csv(CLASS_DISTRIBUTION)
 
     idx["density_bucket"] = idx["num_objects"].apply(density_bucket)
 
     sample_fraction = SAMPLE_SIZE / len(idx)
-    rare_targets = rare_class_targets(cls, sample_fraction)
-    rare_targets.to_csv(OUT / "task2_rare_class_targets.csv", index=False)
+    rare_targets_df = rare_class_targets(classes_df, sample_fraction)
+    rare_targets_path = SAMPLING_OUTPUT_DIR / "rare_class_targets.csv"
+    rare_targets_df.to_csv(rare_targets_path, index=False)
 
     random_sample = idx.sample(n=SAMPLE_SIZE, random_state=RANDOM_SEED).reset_index(drop=True)
     density_sample = proportional_sample(idx, "density_bucket", SAMPLE_SIZE, RANDOM_SEED)
@@ -269,7 +301,7 @@ def main():
     rare_density_sample = enforce_rare_class_targets(
         base_sample=density_sample,
         full_df=idx,
-        rare_targets=rare_targets,
+        rare_targets_df=rare_targets_df,
         seed=RANDOM_SEED,
     )
 
@@ -280,29 +312,34 @@ def main():
     }
 
     quality = pd.DataFrame([
-        compare_sample(idx, sample, cls, name, rare_targets)
+        compare_sample(idx, sample, classes_df, name, rare_targets_df)
         for name, sample in candidates.items()
     ])
 
-    quality.to_csv(OUT / "task2_candidate_sample_quality.csv", index=False)
+    quality_path = SAMPLING_OUTPUT_DIR / "candidate_sample_quality.csv"
+    quality.to_csv(quality_path, index=False)
 
     selected_name = "rare_aware_density_stratified_5000"
     selected = candidates[selected_name].copy()
-    selected.to_csv(OUT / "task2_selected_sample_index.csv", index=False)
+
+    selected_index_path = SAMPLING_OUTPUT_DIR / "selected_sample_index.csv"
+    selected.to_csv(selected_index_path, index=False)
 
     summary = pd.DataFrame([
         dataset_summary(idx, "full_dataset"),
         dataset_summary(selected, selected_name),
     ])
-    summary.to_csv(OUT / "task2_full_vs_selected_sample_summary.csv", index=False)
 
-    full_class = class_distribution(idx, cls, "full_dataset")
-    selected_class = class_distribution(selected, cls, selected_name)
+    summary_path = SAMPLING_OUTPUT_DIR / "sample_summary.csv"
+    summary.to_csv(summary_path, index=False)
+
+    full_class = class_distribution(idx, classes_df, "full_dataset")
+    selected_class = class_distribution(selected, classes_df, selected_name)
 
     class_compare = full_class.merge(
         selected_class,
         on=["class_id", "class_name"],
-        suffixes=("_full", "_sample")
+        suffixes=("_full", "_sample"),
     )
 
     class_compare["object_share_diff_pp"] = (
@@ -312,19 +349,21 @@ def main():
         class_compare["image_share_pct_sample"] - class_compare["image_share_pct_full"]
     )
 
-    class_compare.to_csv(OUT / "task2_full_vs_selected_class_distribution.csv", index=False)
+    class_compare_path = SAMPLING_OUTPUT_DIR / "class_distribution_comparison.csv"
+    class_compare.to_csv(class_compare_path, index=False)
 
-    rare_coverage = class_compare[class_compare["class_name"].isin(rare_targets["class_name"])].copy()
+    rare_coverage = class_compare[class_compare["class_name"].isin(rare_targets_df["class_name"])].copy()
     rare_coverage = rare_coverage.merge(
-        rare_targets[["class_name", "target_image_count"]],
+        rare_targets_df[["class_name", "target_image_count"]],
         on="class_name",
-        how="left"
+        how="left",
     )
     rare_coverage["sample_image_retention_pct"] = (
         100 * rare_coverage["image_count_sample"] / rare_coverage["image_count_full"]
     )
 
-    rare_coverage.to_csv(OUT / "task2_selected_rare_class_coverage.csv", index=False)
+    rare_coverage_path = SAMPLING_OUTPUT_DIR / "rare_class_coverage.csv"
+    rare_coverage.to_csv(rare_coverage_path, index=False)
 
     full_density = density_distribution(idx, "full_dataset")
     selected_density = density_distribution(selected, selected_name)
@@ -332,15 +371,25 @@ def main():
     density_compare = full_density.merge(
         selected_density,
         on="density_bucket",
-        suffixes=("_full", "_sample")
+        suffixes=("_full", "_sample"),
     )
     density_compare["image_share_diff_pp"] = (
         density_compare["image_share_pct_sample"] - density_compare["image_share_pct_full"]
     )
 
-    density_compare.to_csv(OUT / "task2_full_vs_selected_density_distribution.csv", index=False)
+    density_compare_path = SAMPLING_OUTPUT_DIR / "density_distribution_comparison.csv"
+    density_compare.to_csv(density_compare_path, index=False)
 
-    # Figure 1: class distribution full vs selected.
+    plt.figure(figsize=(9, 6))
+    plt.bar(quality["sample_name"], quality["class_object_share_mae_pp"])
+    plt.xticks(rotation=20, ha="right")
+    plt.ylabel("Mean absolute class object-share error (percentage points)")
+    plt.title("Candidate sample class-distribution error")
+    plt.tight_layout()
+    candidate_error_fig = FIGURE_DIR / "01_class_distribution_error.png"
+    plt.savefig(candidate_error_fig, dpi=200, bbox_inches="tight")
+    plt.close()
+
     plot_df = class_compare.sort_values("object_count_full", ascending=True)
     y = np.arange(len(plot_df))
     bar_height = 0.38
@@ -351,13 +400,13 @@ def main():
     plt.yticks(y, plot_df["class_name"])
     plt.xlabel("Object share (%)")
     plt.ylabel("Class")
-    plt.title("Task 2: Full dataset vs selected sample class distribution")
+    plt.title("Full dataset vs selected sample class distribution")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(FIG / "task2_class_distribution_full_vs_selected_sample.png", dpi=200, bbox_inches="tight")
+    class_distribution_fig = FIGURE_DIR / "02_class_distribution_comparison.png"
+    plt.savefig(class_distribution_fig, dpi=200, bbox_inches="tight")
     plt.close()
 
-    # Figure 2: density distribution full vs selected.
     density_plot = density_compare.copy()
     x = np.arange(len(density_plot))
     bar_width = 0.38
@@ -368,24 +417,15 @@ def main():
     plt.xticks(x, density_plot["density_bucket"])
     plt.xlabel("Objects per image bucket")
     plt.ylabel("Image share (%)")
-    plt.title("Task 2: Full dataset vs selected sample object-density distribution")
+    plt.title("Full dataset vs selected sample object-density distribution")
     plt.legend()
     plt.tight_layout()
-    plt.savefig(FIG / "task2_density_distribution_full_vs_selected_sample.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    # Figure 3: candidate quality by class-distribution error.
-    plt.figure(figsize=(9, 6))
-    plt.bar(quality["sample_name"], quality["class_object_share_mae_pp"])
-    plt.xticks(rotation=20, ha="right")
-    plt.ylabel("Mean absolute class object-share error (percentage points)")
-    plt.title("Task 2: Candidate sample class-distribution error")
-    plt.tight_layout()
-    plt.savefig(FIG / "task2_candidate_class_distribution_error.png", dpi=200, bbox_inches="tight")
+    density_distribution_fig = FIGURE_DIR / "03_density_distribution.png"
+    plt.savefig(density_distribution_fig, dpi=200, bbox_inches="tight")
     plt.close()
 
     print("Rare-class targets:")
-    print(rare_targets.to_string(index=False))
+    print(rare_targets_df.to_string(index=False))
 
     print("\nCandidate sample quality:")
     print(quality.to_string(index=False))
@@ -394,16 +434,19 @@ def main():
     print("Selected sample images:", len(selected))
 
     print("\nWrote:")
-    print(OUT / "task2_rare_class_targets.csv")
-    print(OUT / "task2_candidate_sample_quality.csv")
-    print(OUT / "task2_selected_sample_index.csv")
-    print(OUT / "task2_full_vs_selected_sample_summary.csv")
-    print(OUT / "task2_full_vs_selected_class_distribution.csv")
-    print(OUT / "task2_selected_rare_class_coverage.csv")
-    print(OUT / "task2_full_vs_selected_density_distribution.csv")
-    print(FIG / "task2_class_distribution_full_vs_selected_sample.png")
-    print(FIG / "task2_density_distribution_full_vs_selected_sample.png")
-    print(FIG / "task2_candidate_class_distribution_error.png")
+    for path in [
+        rare_targets_path,
+        quality_path,
+        selected_index_path,
+        summary_path,
+        class_compare_path,
+        rare_coverage_path,
+        density_compare_path,
+        candidate_error_fig,
+        class_distribution_fig,
+        density_distribution_fig,
+    ]:
+        print(path)
 
 
 if __name__ == "__main__":
