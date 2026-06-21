@@ -23,7 +23,7 @@ The tested image conditions were:
 
 For Gaussian blur and brightness changes, ground-truth boxes remain unchanged because object locations do not move. For vertical flip, the ground-truth boxes are also vertically flipped before evaluation. This is necessary because otherwise the flipped image and original labels would no longer describe the same object locations.
 
-### Table 11: Augmentation Impact Summary
+### Table 1: Augmentation Impact Summary
 
 | Image Condition     | mAP@0.5 | mAP Change vs Original | Percent Change vs Original | Ground Truth Objects | Predictions After NMS | Prediction Change vs Original |
 | ------------------- | ------: | ---------------------: | -------------------------: | -------------------: | --------------------: | ----------------------------: |
@@ -33,43 +33,43 @@ For Gaussian blur and brightness changes, ground-truth boxes remain unchanged be
 | Brightness increase |  0.5359 |                -0.0146 |                     -2.65% |               19,196 |                10,622 |                          -535 |
 | Brightness decrease |  0.5205 |                -0.0300 |                     -5.45% |               19,196 |                10,024 |                        -1,133 |
 
-**Table 11: Augmentation impact summary.** The table compares Model 2 performance across the original and transformed image conditions while holding the model, dataset, score threshold, NMS threshold, and evaluation method constant.
+**Table 1: Augmentation impact summary.** The table compares Model 2 performance across the original and transformed image conditions while holding the model, dataset, score threshold, NMS threshold, and evaluation method constant.
 
 **Interpretation and design impact.** The results show that Model 2 is not equally robust to all transformations. Vertical flip causes the largest degradation, reducing mAP@0.5 from 0.5505 to 0.3120, a 43.32% drop. Gaussian blur also causes a substantial performance decline, reducing mAP@0.5 to 0.4118, a 25.20% drop. Brightness changes are much less damaging: brightness increase reduces mAP by only 2.65%, while brightness decrease reduces mAP by 5.45%. The prediction counts follow the same pattern. Gaussian blur and vertical flip sharply reduce the number of detections retained after NMS, while brightness changes reduce prediction count only moderately.
 
-### Figure 9: Visual Examples of Augmentation Functions
+### Figure 1: Visual Examples of Augmentation Functions
 
-![Figure 9: Visual examples of Warehouse Object Detection augmentation functions](../figures/04_augmentation_robustness/01_augmentation_examples.png)
+![Figure 1: Visual examples of Warehouse Object Detection augmentation functions](../figures/04_augmentation_robustness/01_augmentation_examples.png)
 
-**Figure 9: Visual examples of Warehouse Object Detection augmentation functions.** This figure shows the original image and the transformed versions used in augmentation-robustness analysis: vertical flip, Gaussian blur, brightness increase, and brightness decrease.
+**Figure 1: Visual examples of Warehouse Object Detection augmentation functions.** This figure shows the original image and the transformed versions used in augmentation-robustness analysis: vertical flip, Gaussian blur, brightness increase, and brightness decrease.
 
 **Interpretation and design impact.** The visual examples confirm that the implemented augmentation functions produce the intended transformations. Gaussian blur reduces image sharpness and weakens edges and texture details. Brightness adjustments change illumination while preserving object locations. Vertical flip changes the geometry and orientation of the entire scene. This matters because not all augmentations are equally realistic for a warehouse camera. Lighting changes and blur can plausibly occur in deployment, but vertical flipping may represent a less realistic transformation unless cameras are mounted or processed in unusual orientations.
 
-### Figure 10: Model 2 mAP@0.5 by Image Condition
+### Figure 2: Model 2 mAP@0.5 by Image Condition
 
-![Figure 10: Model 2 performance under image augmentations](../figures/04_augmentation_robustness/02_map_by_condition.png)
+![Figure 2: Model 2 performance under image augmentations](../figures/04_augmentation_robustness/02_map_by_condition.png)
 
-**Figure 10: Model 2 mAP@0.5 by image condition.** This figure compares absolute mAP@0.5 across the original and augmented image conditions.
+**Figure 2: Model 2 mAP@0.5 by image condition.** This figure compares absolute mAP@0.5 across the original and augmented image conditions.
 
 **Interpretation and design impact.** The original images produce the highest mAP. Brightness increase and brightness decrease remain relatively close to the original condition, while Gaussian blur and vertical flip produce much lower mAP. This indicates that Model 2 is more robust to moderate illumination changes than to blur or geometric inversion. The result is important for deployment planning because warehouse systems may experience lighting changes, motion blur, defocus, camera noise, or unusual camera orientations. These transformations do not have equal impact on model reliability.
 
-### Figure 11: mAP@0.5 Drop vs Original
+### Figure 3: mAP@0.5 Drop vs Original
 
-![Figure 11: mAP drop vs original under augmentations](../figures/04_augmentation_robustness/03_map_drop_vs_baseline.png)
+![Figure 3: mAP drop vs original under augmentations](../figures/04_augmentation_robustness/03_map_drop_vs_baseline.png)
 
-**Figure 11: mAP@0.5 drop vs original under image augmentations.** This figure shows performance degradation as a positive mAP drop from the original-image baseline.
+**Figure 3: mAP@0.5 drop vs original under image augmentations.** This figure shows performance degradation as a positive mAP drop from the original-image baseline.
 
 **Interpretation and design impact.** Expressing the result as a positive drop makes the robustness ranking clear. Vertical flip produces the largest mAP loss, followed by Gaussian blur. Brightness decrease is more damaging than brightness increase, but both brightness conditions are much less damaging than blur or vertical flip. This suggests that brightness augmentation is comparatively safe and realistic, while blur should be treated as a serious robustness concern and vertical flip should be used cautiously.
 
-### Figure 12: Post-NMS Prediction Count by Image Condition
+### Figure 4: Post-NMS Prediction Count by Image Condition
 
-![Figure 12: Post-NMS prediction count by image condition](../figures/04_augmentation_robustness/04_prediction_count_by_condition.png)
+![Figure 4: Post-NMS prediction count by image condition](../figures/04_augmentation_robustness/04_prediction_count_by_condition.png)
 
-**Figure 12: Post-NMS prediction count by image condition.** This figure compares the number of detections retained after applying the fixed NMS threshold of 0.50.
+**Figure 4: Post-NMS prediction count by image condition.** This figure compares the number of detections retained after applying the fixed NMS threshold of 0.50.
 
 **Interpretation and design impact.** Gaussian blur and vertical flip sharply reduce the number of predictions retained after NMS. The original condition produces 11,157 post-NMS predictions, while Gaussian blur produces 6,230 and vertical flip produces 5,355. This means the model is not only making less accurate detections under these transformations; it is also producing fewer confident detections that survive post-processing. Brightness changes reduce the prediction count less severely, which matches their smaller mAP decline.
 
-### Table 12: Largest Per-Class AP Drops Under Augmentation
+### Table 2: Largest Per-Class AP Drops Under Augmentation
 
 | Image Condition | Class        | Ground Truth Count | Prediction Count | Original AP@0.5 | AP@0.5 Under Augmentation | AP Drop vs Original |
 | --------------- | ------------ | -----------------: | ---------------: | --------------: | ------------------------: | ------------------: |
@@ -86,21 +86,21 @@ For Gaussian blur and brightness changes, ground-truth boxes remain unchanged be
 | Gaussian blur   | helmet       |              1,159 |              139 |          0.4994 |                    0.2276 |              0.2718 |
 | Gaussian blur   | van          |                394 |              204 |          0.7896 |                    0.5428 |              0.2467 |
 
-**Table 12: Largest per-class AP drops under augmentation.** The table identifies the class and augmentation combinations with the largest AP losses compared with the original image condition.
+**Table 2: Largest per-class AP drops under augmentation.** The table identifies the class and augmentation combinations with the largest AP losses compared with the original image condition.
 
 **Interpretation and design impact.** The largest class-level failures are concentrated under vertical flip. Forklift, traffic cone, van, gloves, car, safety vest, helmet, smoke, and person all lose substantial AP when images are vertically flipped. Gaussian blur also creates large AP drops for truck, helmet, and van. This matters because several of these classes are operationally or safety-relevant in a warehouse setting. The model’s robustness problem is therefore not limited to low-priority classes; it affects objects that could influence navigation, worker safety, vehicle awareness, and monitoring decisions.
 
-### Figure 13: Largest Per-Class AP Drops Under Augmentation
+### Figure 5: Largest Per-Class AP Drops Under Augmentation
 
-![Figure 13: Largest per-class AP drops under augmentation](../figures/04_augmentation_robustness/05_largest_per_class_ap_drops.png)
+![Figure 5: Largest per-class AP drops under augmentation](../figures/04_augmentation_robustness/05_largest_per_class_ap_drops.png)
 
-**Figure 13: Largest per-class AP drops under augmentation.** This figure visualizes the largest class-specific AP losses under the tested image transformations.
+**Figure 5: Largest per-class AP drops under augmentation.** This figure visualizes the largest class-specific AP losses under the tested image transformations.
 
 **Interpretation and design impact.** The figure reinforces the main class-level pattern: vertical flip is the most damaging transformation across many classes. This result is expected for a fixed-camera warehouse context because vertical inversion changes the scene structure in a way that likely differs from the model’s training distribution. Gaussian blur is also damaging, especially for classes where edges, textures, shape boundaries, or small visual details matter. These class-specific failures suggest that future rectification should not focus only on aggregate mAP. It should also target the classes most vulnerable under realistic image degradation.
 
 ## Conclusion
 
-augmentation-robustness analysis shows that Model 2 is much more robust to brightness changes than to Gaussian blur or vertical flip. Brightness increase and brightness decrease reduce mAP@0.5 only modestly, while Gaussian blur causes a substantial performance drop and vertical flip causes the largest degradation.
+The augmentation-robustness analysis shows that Model 2 is much more robust to brightness changes than to Gaussian blur or vertical flip. Brightness increase and brightness decrease reduce mAP@0.5 only modestly, while Gaussian blur causes a substantial performance drop and vertical flip causes the largest degradation.
 
 The design implication is that augmentation should be selected based on operational realism. Brightness augmentation appears useful and relatively safe because lighting variation is realistic in warehouse environments and the model remains comparatively stable under brightness changes. Gaussian blur should be included in robustness planning because blur can occur from motion, focus problems, compression, or camera quality, and the current model is vulnerable to it. Vertical flip should be treated carefully because it produces the largest degradation and may not represent a realistic warehouse camera condition unless inverted camera views are expected.
 
