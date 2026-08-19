@@ -1,3 +1,5 @@
+import contextlib
+import io
 import sys
 import tempfile
 import types
@@ -12,12 +14,24 @@ try:
     import cv2  # noqa: F401
 except ModuleNotFoundError:
     cv2_stub = types.ModuleType("cv2")
+    cv2_stub.FONT_HERSHEY_SIMPLEX = 0
     cv2_stub.VideoCapture = Mock(name="VideoCapture")
     cv2_stub.dnn = types.SimpleNamespace()
+    cv2_stub.rectangle = Mock(side_effect=lambda frame, *args, **kwargs: frame)
+    cv2_stub.putText = Mock(side_effect=lambda frame, *args, **kwargs: frame)
+    cv2_stub.imwrite = Mock(return_value=True)
     sys.modules["cv2"] = cv2_stub
 
+from detector_service import app as app_module
+from detector_service.app import (
+    DEFAULT_MODEL_DIR,
+    InferenceService,
+    build_parser,
+    positive_int,
+)
 from detector_service.modules.inference import model as model_module
 from detector_service.modules.inference.model import Detector
+from detector_service.modules.inference.nms import NMS
 from detector_service.modules.inference.preprocessing import Preprocessing
 
 
@@ -66,6 +80,60 @@ class _NetworkDouble:
     def forward(self, *args):
         self.forward_calls.append(args)
         return self.outputs
+
+
+class _ClosableFrameIterator:
+    def __init__(self, frames):
+        self._frames = iter(frames)
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._frames)
+
+    def close(self):
+        self.closed = True
+
+
+class _StreamDouble:
+    def __init__(self, frame_count):
+        frames = [
+            np.full((20, 20, 3), index, dtype=np.uint8)
+            for index in range(frame_count)
+        ]
+        self.iterator = _ClosableFrameIterator(frames)
+
+    def capture_video(self):
+        return self.iterator
+
+
+class _ServiceDetectorDouble:
+    classes = ["pallet", "forklift"]
+
+    def __init__(self, *, interrupt=False, error=None):
+        self.interrupt = interrupt
+        self.error = error
+        self.predict_calls = []
+        self.post_process_calls = []
+
+    def predict(self, frame):
+        self.predict_calls.append(frame)
+        if self.interrupt:
+            raise KeyboardInterrupt
+        if self.error is not None:
+            raise self.error
+        return ["raw-output"]
+
+    def post_process(self, predictions):
+        self.post_process_calls.append(predictions)
+        return (
+            [[2, 3, 10, 8]],
+            [0],
+            [0.8],
+            [[0.75, 0.25]],
+        )
 
 
 class PreprocessingTests(unittest.TestCase):
@@ -288,6 +356,258 @@ class DetectorTests(unittest.TestCase):
         )
 
         self.assertEqual(result, ([], [], [], []))
+
+
+class InferenceServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.rectangle = patch.object(app_module.cv2, "rectangle", Mock())
+        self.put_text = patch.object(app_module.cv2, "putText", Mock())
+        self.imwrite = patch.object(app_module.cv2, "imwrite", Mock(return_value=True))
+        self.rectangle_mock = self.rectangle.start()
+        self.put_text_mock = self.put_text.start()
+        self.imwrite_mock = self.imwrite.start()
+        self.addCleanup(self.rectangle.stop)
+        self.addCleanup(self.put_text.stop)
+        self.addCleanup(self.imwrite.stop)
+
+    @staticmethod
+    def _service(frame_count=1, *, save_dir=None, max_frames=None, detector=None):
+        stream = _StreamDouble(frame_count)
+        service = InferenceService(
+            stream=stream,
+            detector=detector or _ServiceDetectorDouble(),
+            nms=NMS(score_threshold=0.5, nms_iou_threshold=0.3),
+            save_dir=save_dir,
+            max_frames=max_frames,
+        )
+        return service, stream
+
+    def test_run_reports_combined_confidence_and_closes_stream(self):
+        service, stream = self._service()
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            processed = service.run()
+
+        self.assertEqual(processed, 1)
+        self.assertTrue(stream.iterator.closed)
+        self.assertIn("[FRAME] index=0 detections=1", output.getvalue())
+        self.assertIn("combined_confidence=0.6000", output.getvalue())
+        self.assertIn("Inference completed. Processed 1 frames", output.getvalue())
+        self.assertEqual(self.put_text_mock.call_args.args[1], "pallet: 0.60")
+        self.imwrite_mock.assert_not_called()
+
+    def test_run_annotates_a_copy_of_the_stream_frame(self):
+        detector = _ServiceDetectorDouble()
+        service, _ = self._service(detector=detector)
+
+        with patch.object(
+            service,
+            "draw_boxes",
+            side_effect=lambda frame, *args: frame,
+        ) as draw_boxes, contextlib.redirect_stdout(io.StringIO()):
+            service.run()
+
+        source_frame = detector.predict_calls[0]
+        annotation_frame = draw_boxes.call_args.args[0]
+        self.assertIsNot(annotation_frame, source_frame)
+        np.testing.assert_array_equal(annotation_frame, source_frame)
+
+    def test_draw_boxes_uses_fallback_name_for_unknown_class(self):
+        service, _ = self._service()
+        frame = np.zeros((30, 30, 3), dtype=np.uint8)
+
+        returned = service.draw_boxes(
+            frame,
+            bboxes=[[4.8, 5.2, 10.9, 6.1]],
+            class_ids=[9],
+            confidences=[0.725],
+        )
+
+        self.assertIs(returned, frame)
+        self.rectangle_mock.assert_called_once_with(
+            frame,
+            (4, 5),
+            (14, 11),
+            (0, 255, 0),
+            2,
+        )
+        self.put_text_mock.assert_called_once_with(
+            frame,
+            "class_9: 0.72",
+            (4, 20),
+            app_module.cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 255),
+            2,
+        )
+
+    def test_save_frame_writes_zero_padded_jpeg_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = self._service(save_dir=temp_dir)
+            frame = np.zeros((4, 4, 3), dtype=np.uint8)
+
+            path = service.save_frame(frame, frame_number=27)
+
+        self.assertEqual(path.name, "frame_000027.jpg")
+        self.imwrite_mock.assert_called_once_with(str(path), frame)
+
+    def test_constructor_creates_nested_output_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "nested" / "detections"
+
+            service, _ = self._service(save_dir=output_dir)
+
+            self.assertEqual(service.save_dir, output_dir)
+            self.assertTrue(output_dir.is_dir())
+
+    def test_save_frame_raises_when_encoder_reports_failure(self):
+        self.imwrite_mock.return_value = False
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = self._service(save_dir=temp_dir)
+
+            with self.assertRaisesRegex(OSError, "frame_000004.jpg"):
+                service.save_frame(
+                    np.zeros((4, 4, 3), dtype=np.uint8),
+                    frame_number=4,
+                )
+
+    def test_frame_limit_stops_and_closes_longer_stream(self):
+        service, stream = self._service(frame_count=5, max_frames=2)
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            processed = service.run()
+
+        self.assertEqual(processed, 2)
+        self.assertTrue(stream.iterator.closed)
+        self.assertIn("Reached configured frame limit: 2", output.getvalue())
+        self.assertNotIn("[FRAME] index=2", output.getvalue())
+
+    def test_keyboard_interrupt_is_reported_and_stream_is_closed(self):
+        detector = _ServiceDetectorDouble(interrupt=True)
+        service, stream = self._service(detector=detector)
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            processed = service.run()
+
+        self.assertEqual(processed, 0)
+        self.assertTrue(stream.iterator.closed)
+        self.assertIn("Inference interrupted by user", output.getvalue())
+        self.assertIn("Processed 0 frames", output.getvalue())
+
+    def test_non_interrupt_exception_propagates_after_stream_cleanup(self):
+        detector = _ServiceDetectorDouble(error=RuntimeError("inference failed"))
+        service, stream = self._service(detector=detector)
+
+        with self.assertRaisesRegex(RuntimeError, "inference failed"):
+            service.run()
+
+        self.assertTrue(stream.iterator.closed)
+
+    def test_constructor_rejects_nonpositive_frame_limit(self):
+        for invalid in (0, -1):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                ValueError,
+                "greater than 0",
+            ):
+                self._service(max_frames=invalid)
+
+    def test_positive_int_accepts_only_values_above_zero(self):
+        self.assertEqual(positive_int("7"), 7)
+        for invalid in ("0", "-2", "not-a-number"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                Exception,
+                "positive integer",
+            ):
+                positive_int(invalid)
+
+    def test_cli_defaults_and_overrides_match_runtime_contract(self):
+        defaults = build_parser().parse_args([])
+        self.assertEqual(defaults.source, "udp://127.0.0.1:23000")
+        self.assertEqual(defaults.weights.parent, DEFAULT_MODEL_DIR)
+        self.assertTrue(defaults.weights.name.endswith("_2.weights"))
+        self.assertEqual(defaults.frame_interval, 60)
+        self.assertIsNone(defaults.max_frames)
+        self.assertEqual(defaults.candidate_threshold, 0.5)
+        self.assertEqual(defaults.confidence_threshold, 0.5)
+        self.assertEqual(defaults.nms_iou_threshold, 0.3)
+        self.assertFalse(defaults.no_save)
+        self.assertIsInstance(defaults.save_dir, Path)
+
+        configured = build_parser().parse_args(
+            [
+                "--source",
+                "clip.mp4",
+                "--frame-interval",
+                "4",
+                "--max-frames",
+                "3",
+                "--no-save",
+            ]
+        )
+        self.assertEqual(configured.source, "clip.mp4")
+        self.assertEqual(configured.frame_interval, 4)
+        self.assertEqual(configured.max_frames, 3)
+        self.assertTrue(configured.no_save)
+
+    def test_main_composes_cli_dependencies_and_returns_service_result(self):
+        stream = object()
+        detector = types.SimpleNamespace(classes=[])
+        nms = object()
+        service = Mock()
+        service.run.return_value = 12
+
+        with patch.object(app_module, "Preprocessing", return_value=stream) as prep, \
+            patch.object(app_module, "Detector", return_value=detector) as model, \
+            patch.object(app_module, "NMS", return_value=nms) as nms_constructor, \
+            patch.object(
+                app_module,
+                "InferenceService",
+                return_value=service,
+            ) as service_constructor:
+            result = app_module.main(
+                [
+                    "--source",
+                    "clip.mp4",
+                    "--weights",
+                    "custom.weights",
+                    "--config",
+                    "custom.cfg",
+                    "--classes",
+                    "custom.names",
+                    "--frame-interval",
+                    "5",
+                    "--max-frames",
+                    "2",
+                    "--candidate-threshold",
+                    "0.4",
+                    "--confidence-threshold",
+                    "0.6",
+                    "--nms-iou-threshold",
+                    "0.25",
+                    "--no-save",
+                ]
+            )
+
+        self.assertEqual(result, 12)
+        prep.assert_called_once_with("clip.mp4", drop_rate=5)
+        model.assert_called_once_with(
+            "custom.weights",
+            "custom.cfg",
+            "custom.names",
+            0.4,
+        )
+        nms_constructor.assert_called_once_with(0.6, 0.25)
+        service_constructor.assert_called_once_with(
+            stream,
+            detector,
+            nms,
+            save_dir=None,
+            max_frames=2,
+        )
+        service.run.assert_called_once_with()
 
 
 if __name__ == "__main__":
