@@ -1,0 +1,15 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+scratch/
+storage/
+detector_service/storage/
+experiments/notebooks/
+experiments/outputs/
+notebook_text_exports/
