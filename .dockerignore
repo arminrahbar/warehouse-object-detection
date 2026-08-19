@@ -1,0 +1,12 @@
+.git/
+.venv/
+.env
+.DS_Store
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/storage/
+experiments/
+tests/
+scratch/
+notebook_text_exports/
