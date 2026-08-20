@@ -12,4 +12,5 @@ storage/
 detector_service/storage/
 experiments/notebooks/
 experiments/outputs/
+experiments/figures/
 notebook_text_exports/

@@ -160,7 +160,7 @@ def build_parser() -> ArgumentParser:
     parser.add_argument(
         "--source",
         default="udp://127.0.0.1:23000",
-        help="Video file, camera, or UDP source understood by OpenCV.",
+        help="Video file or network-stream URL understood by OpenCV.",
     )
     parser.add_argument(
         "--weights",
