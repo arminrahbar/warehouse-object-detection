@@ -1,0 +1,7 @@
+-r detector_service/requirements.txt
+pandas
+matplotlib
+seaborn
+scikit-learn
+scipy
+pyarrow
