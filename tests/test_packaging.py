@@ -7,6 +7,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = PROJECT_ROOT / "detector_service" / "Dockerfile"
 DOCKERIGNORE = PROJECT_ROOT / ".dockerignore"
 REQUIREMENTS = PROJECT_ROOT / "detector_service" / "requirements.txt"
+ANALYSIS_REQUIREMENTS = PROJECT_ROOT / "requirements-analysis.txt"
+CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _active_lines(path):
@@ -99,6 +101,56 @@ class ContainerPackagingTests(unittest.TestCase):
                 "detector_service/",
             ],
         )
+
+
+class ContinuousIntegrationWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    def test_workflow_targets_main_pushes_and_pull_requests(self):
+        self.assertIn("on:\n  push:\n", self.workflow)
+        self.assertIn("  pull_request:\n", self.workflow)
+        self.assertGreaterEqual(self.workflow.count("      - main\n"), 2)
+        self.assertNotIn("pull_request_target", self.workflow)
+
+    def test_workflow_uses_read_only_repository_permissions(self):
+        self.assertRegex(
+            self.workflow,
+            r"(?m)^permissions:\n  contents: read\s*$",
+        )
+        self.assertNotRegex(self.workflow, r"(?m)^\s*\w[\w-]*: write\s*$")
+
+    def test_checkout_credentials_are_not_persisted(self):
+        self.assertEqual(self.workflow.count("uses: actions/checkout@v6"), 2)
+        self.assertEqual(
+            self.workflow.count("persist-credentials: false"),
+            2,
+        )
+
+    def test_python_job_uses_validated_version_and_dependency_manifest(self):
+        self.assertTrue(ANALYSIS_REQUIREMENTS.is_file())
+        self.assertIn("uses: actions/setup-python@v6", self.workflow)
+        self.assertIn('python-version: "3.12"', self.workflow)
+        self.assertIn("cache: pip", self.workflow)
+        self.assertIn("requirements-analysis.txt", self.workflow)
+        self.assertIn(
+            "python -m pip install --requirement requirements-analysis.txt",
+            self.workflow,
+        )
+
+    def test_python_job_runs_the_public_test_suite(self):
+        self.assertIn(
+            "python -m unittest discover -s tests -v",
+            self.workflow,
+        )
+
+    def test_container_job_builds_without_publishing(self):
+        self.assertIn("--file detector_service/Dockerfile", self.workflow)
+        self.assertIn("--tag warehouse-object-detection:ci", self.workflow)
+        self.assertNotIn("docker push", self.workflow)
+        self.assertNotIn("packages: write", self.workflow)
+        self.assertNotIn("secrets.", self.workflow)
 
 
 if __name__ == "__main__":

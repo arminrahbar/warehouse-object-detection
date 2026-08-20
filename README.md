@@ -295,6 +295,21 @@ is not a complete robustness or safety evaluation. Hard-example queues are
 review priorities, not automatically corrected training labels. The repository
 evaluates existing checkpoints and does not include a model-training pipeline.
 
+## Continuous integration
+
+The GitHub Actions workflow runs on pushes to `main` and pull requests targeting
+`main`. Its two independent jobs:
+
+- install the analysis environment under Python 3.12 and run the public test
+  suite;
+- build the inference container without model, dataset, video, or generated
+  artifacts in the Docker context.
+
+The workflow uses read-only repository permissions, receives no secrets, and
+does not publish its locally built image. External parity checks self-skip when
+their optional comparison sources are unavailable; the asset-independent
+runtime, experiment, and packaging contracts still execute.
+
 ## Tests
 
 ```bash
