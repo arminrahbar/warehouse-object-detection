@@ -84,6 +84,28 @@ class SamplingFixture(unittest.TestCase):
 
 
 class SamplingContractTests(unittest.TestCase):
+    def test_default_paths_follow_the_canonical_stage_hierarchy(self):
+        self.assertEqual(
+            sampling.DEFAULT_DATASET_INDEX,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "00_dataset_inventory"
+            / "dataset_index.csv",
+        )
+        self.assertEqual(
+            sampling.DEFAULT_OUTPUT_DIR,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "02_dataset_analysis"
+            / "02_sample_selection",
+        )
+        self.assertEqual(
+            sampling.DEFAULT_FIGURE_DIR,
+            PROJECT_ROOT / "scratch" / "diagnostic-figures" / "02_dataset_analysis",
+        )
+
     def test_constants_and_candidate_policy_are_explicit(self):
         self.assertEqual(sampling.SAMPLE_SIZE, 5000)
         self.assertEqual(sampling.RANDOM_SEED, 42)

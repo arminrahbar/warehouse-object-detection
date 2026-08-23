@@ -18,14 +18,18 @@ DEFAULT_SAMPLE_INDEX = (
     PROJECT_ROOT
     / "experiments"
     / "outputs"
-    / "dataset_sampling"
+    / "02_dataset_analysis"
+    / "02_sample_selection"
     / "selected_sample_index.csv"
 )
-DEFAULT_OUTPUT = (
+DEFAULT_FIGURE_DIR = (
     PROJECT_ROOT
-    / "experiments"
-    / "figures"
+    / "scratch"
+    / "diagnostic-figures"
     / "04_augmentation_robustness"
+)
+DEFAULT_OUTPUT = (
+    DEFAULT_FIGURE_DIR
     / "01_augmentation_examples.png"
 )
 

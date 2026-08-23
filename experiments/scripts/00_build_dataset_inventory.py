@@ -1,4 +1,4 @@
-"""Build deterministic dataset metadata from paired YOLO images and labels."""
+"""Build the stage-00 dataset inventory from paired YOLO images and labels."""
 
 import argparse
 import csv
@@ -16,7 +16,9 @@ DEFAULT_DATASET_RELATIVE = Path("detector_service/storage/logistics")
 DEFAULT_CLASSES_RELATIVE = Path(
     "detector_service/storage/yolo_model_1/logistics.names"
 )
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "experiments" / "outputs"
+DEFAULT_OUTPUT_DIR = (
+    PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
+)
 
 BASE_INDEX_COLUMNS = [
     "image_path",
@@ -56,19 +58,23 @@ def clean_column_name(name):
 
 
 def load_classes(path):
-    """Read non-empty class names and reject ambiguous count columns."""
+    """Read an ordered class vocabulary without allowing ID renumbering."""
 
     class_path = Path(path)
     if not class_path.is_file():
         raise FileNotFoundError(f"Class names file not found: {class_path}")
 
-    classes = [
-        line.strip()
-        for line in class_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    if not classes:
+    lines = class_path.read_text(encoding="utf-8").splitlines()
+    if not lines or all(not line.strip() for line in lines):
         raise ValueError(f"Class names file is empty: {class_path}")
+    blank_lines = [index for index, line in enumerate(lines, start=1) if not line.strip()]
+    if blank_lines:
+        rendered = ", ".join(str(index) for index in blank_lines)
+        raise ValueError(
+            "Class names file contains blank entries that would renumber "
+            f"class IDs (lines: {rendered}): {class_path}"
+        )
+    classes = [line.strip() for line in lines]
 
     suffixes = [clean_column_name(name) for name in classes]
     if any(not suffix for suffix in suffixes):
@@ -91,7 +97,7 @@ def _annotation_error(label_path, line_number, reason, strict):
     return message
 
 
-def parse_label_file(path, class_count, strict=False):
+def parse_label_file(path, class_count, strict=True):
     """Count valid YOLO rows and report rows excluded by validation."""
 
     label_path = Path(path)
@@ -106,25 +112,25 @@ def parse_label_file(path, class_count, strict=False):
             continue
 
         parts = stripped.split()
-        if len(parts) < 5:
+        if len(parts) != 5:
             errors.append(
                 _annotation_error(
                     label_path,
                     line_number,
-                    "expected at least five YOLO fields",
+                    "expected exactly five YOLO fields",
                     strict,
                 )
             )
             continue
 
         try:
-            values = [float(value) for value in parts[:5]]
+            values = [float(value) for value in parts]
         except ValueError:
             errors.append(
                 _annotation_error(
                     label_path,
                     line_number,
-                    "the first five YOLO fields must be numeric",
+                    "all five YOLO fields must be numeric",
                     strict,
                 )
             )
@@ -189,8 +195,11 @@ def _portable_path(path, asset_root):
     absolute_root = Path(asset_root).expanduser().absolute()
     try:
         return absolute_path.relative_to(absolute_root).as_posix()
-    except ValueError:
-        return absolute_path.as_posix()
+    except ValueError as error:
+        raise ValueError(
+            f"Asset path is outside the declared asset root {absolute_root}: "
+            f"{absolute_path}"
+        ) from error
 
 
 def _write_csv_atomic(path, fieldnames, rows):
@@ -224,7 +233,7 @@ def build_dataset_index(
     classes_path,
     output_dir,
     asset_root,
-    strict=False,
+    strict=True,
 ):
     """Build all index artifacts and return their paths and validation counts."""
 
@@ -381,9 +390,12 @@ def build_parser():
         help="Directory for the three CSV artifacts.",
     )
     parser.add_argument(
-        "--strict",
+        "--allow-invalid",
         action="store_true",
-        help="Fail on a missing label or the first invalid annotation row.",
+        help=(
+            "Diagnostic mode: skip missing labels and invalid annotation rows. "
+            "Strict validation is the default for evidence-producing runs."
+        ),
     )
     return parser
 
@@ -413,7 +425,7 @@ def main(argv=None):
         classes_path=classes_path,
         output_dir=output_dir,
         asset_root=asset_root,
-        strict=args.strict,
+        strict=not args.allow_invalid,
     )
 
     print(f"[WRITE] Dataset index: {result.dataset_index_path}")

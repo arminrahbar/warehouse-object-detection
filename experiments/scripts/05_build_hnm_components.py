@@ -17,24 +17,46 @@ from detector_service.modules.rectification.hard_negative_mining import (
     ERROR_COMPONENT_COLUMNS,
     compute_image_error_components,
 )
+from experiments.scripts.experiment_contracts import (
+    load_verified_checkpoint_selection,
+    load_verified_operating_point,
+    threshold_tag,
+)
 
 
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "experiments" / "outputs"
 DEFAULT_SAMPLE_PATH = (
-    DEFAULT_OUTPUT_ROOT / "dataset_sampling" / "selected_sample_index.csv"
-)
-DEFAULT_PREDICTION_PATH = (
     DEFAULT_OUTPUT_ROOT
-    / "nms_thresholding"
-    / "model2_predictions_nms_0_3_sample5000.csv"
+    / "02_dataset_analysis"
+    / "02_sample_selection"
+    / "selected_sample_index.csv"
 )
+DEFAULT_NMS_OUTPUT_DIR = (
+    DEFAULT_OUTPUT_ROOT
+    / "03_nms_thresholding"
+    / "01_threshold_sweep"
+)
+DEFAULT_SELECTION_RUN = (
+    DEFAULT_OUTPUT_ROOT
+    / "01_model_selection"
+    / "03_checkpoint_decision"
+    / "selection-20260821-v1"
+)
+DEFAULT_OPERATING_POINT = DEFAULT_NMS_OUTPUT_DIR / "operating_point.json"
 DEFAULT_GROUND_TRUTH_PATH = (
-    DEFAULT_OUTPUT_ROOT / "nms_thresholding" / "ground_truth_sample5000.csv"
+    DEFAULT_NMS_OUTPUT_DIR / "ground_truth_sample5000.csv"
 )
-DEFAULT_OUTPUT_DIR = DEFAULT_OUTPUT_ROOT / "hard_negative_mining"
+DEFAULT_OUTPUT_DIR = (
+    DEFAULT_OUTPUT_ROOT
+    / "05_hard_negative_mining"
+    / "01_error_components"
+)
 
 MATCH_IOU_THRESHOLD = 0.5
 CONFIDENCE_FLOOR = 0.5
+DATASET_NAME = "rare_aware_density_stratified_5000"
+ORIGINAL_CONDITION = "original"
+PREDICTION_RUN_LABEL = "sample5000"
 DENSITY_BUCKETS = ("1", "2-4", "5-9", "10-14", "15-19", "20+")
 
 SAMPLE_COLUMNS = [
@@ -53,6 +75,8 @@ PREDICTION_COLUMNS = [
     "class_id",
     "combined_confidence",
 ]
+PREDICTION_PROVENANCE_COLUMNS = ["model", "nms_threshold"]
+PREDICTION_INPUT_COLUMNS = [*PREDICTION_PROVENANCE_COLUMNS, *PREDICTION_COLUMNS]
 GROUND_TRUTH_COLUMNS = [
     "image_file",
     "bbox_x",
@@ -85,6 +109,40 @@ def positive_int(value):
     return parsed
 
 
+def resolve_prediction_input(predictions, selection_run, operating_point):
+    """Resolve predictions from verified checkpoint and NMS decisions."""
+
+    selection = load_verified_checkpoint_selection(selection_run)
+    operating = load_verified_operating_point(operating_point, selection_run)
+    model_name = selection["selected_model"]
+    nms_threshold = float(operating["selected_nms_iou_threshold"])
+    default_path = (
+        Path(operating["path"]).parent
+        / (
+            f"{model_name}_predictions_nms_{threshold_tag(nms_threshold)}_"
+            f"{PREDICTION_RUN_LABEL}.csv"
+        )
+    )
+    source = default_path if predictions is None else Path(predictions)
+    return {
+        "prediction_path": source.expanduser().absolute(),
+        "selected_model": model_name,
+        "nms_threshold": nms_threshold,
+        "selection": selection,
+        "operating_point": operating,
+    }
+
+
+# Retained as a pure canonical-layout constant for repository-wide path checks.
+# Runtime resolution remains dynamic: ``main`` verifies the selected checkpoint
+# and operating point before deriving the prediction artifact. Keeping this
+# constant side-effect free also makes imports and ``--help`` work in a clean
+# checkout where ignored experiment evidence is intentionally absent.
+DEFAULT_PREDICTION_PATH = (
+    DEFAULT_NMS_OUTPUT_DIR / "model2_predictions_nms_0_3_sample5000.csv"
+)
+
+
 def _required_columns(table, columns, label):
     missing = [column for column in columns if column not in table.columns]
     if missing:
@@ -107,6 +165,71 @@ def _numeric_columns(table, columns, label):
     if not np.isfinite(normalized[columns].to_numpy(dtype=float)).all():
         raise ValueError(f"{label} contains non-finite numeric values.")
     return normalized
+
+
+def _validate_exact_string_column(table, column, expected, label):
+    if table[column].isna().any():
+        raise ValueError(f"{label} {column} provenance contains missing values.")
+    observed = set(table[column].astype(str))
+    if observed != {expected}:
+        raise ValueError(
+            f"{label} {column} provenance must be {expected!r}; "
+            f"found {sorted(observed)!r}."
+        )
+
+
+def _validate_optional_dataset_condition(table, label):
+    if "dataset" in table.columns:
+        _validate_exact_string_column(table, "dataset", DATASET_NAME, label)
+    for column in ("augmentation_condition", "condition"):
+        if column in table.columns:
+            _validate_exact_string_column(
+                table,
+                column,
+                ORIGINAL_CONDITION,
+                label,
+            )
+
+
+def validate_prediction_provenance(
+    table,
+    *,
+    expected_model,
+    expected_nms_threshold,
+):
+    """Validate upstream identity fields before analysis columns are reduced."""
+
+    _required_columns(
+        table,
+        PREDICTION_PROVENANCE_COLUMNS,
+        "Prediction cache",
+    )
+    if table.empty:
+        raise ValueError("Prediction cache is empty; provenance cannot be verified.")
+    _validate_exact_string_column(
+        table,
+        "model",
+        str(expected_model),
+        "Prediction cache",
+    )
+    thresholds = pd.to_numeric(table["nms_threshold"], errors="coerce")
+    if thresholds.isna().any() or not np.isfinite(thresholds).all():
+        raise ValueError(
+            "Prediction cache nms_threshold provenance must contain finite values."
+        )
+    if not np.isclose(
+        thresholds.to_numpy(dtype=float),
+        float(expected_nms_threshold),
+        rtol=0.0,
+        atol=1e-12,
+    ).all():
+        observed = sorted(set(thresholds.astype(float)))
+        raise ValueError(
+            "Prediction cache nms_threshold provenance must equal "
+            f"{float(expected_nms_threshold):.12g}; found {observed!r}."
+        )
+    _validate_optional_dataset_condition(table, "Prediction cache")
+    return True
 
 
 def _write_csv(path, table):
@@ -163,14 +286,29 @@ def load_sample(path, max_images=None):
     return sample
 
 
-def load_predictions(path, sample):
+def load_predictions(
+    path,
+    sample,
+    *,
+    expected_model,
+    expected_nms_threshold,
+):
     """Load fixed post-NMS predictions and validate the confidence boundary."""
 
     source = Path(path).expanduser().absolute()
     if not source.is_file():
         raise FileNotFoundError(f"Post-NMS prediction cache not found: {source}")
     predictions = pd.read_csv(source)
-    _required_columns(predictions, PREDICTION_COLUMNS, "Prediction cache")
+    _required_columns(
+        predictions,
+        PREDICTION_INPUT_COLUMNS,
+        "Prediction cache",
+    )
+    validate_prediction_provenance(
+        predictions,
+        expected_model=expected_model,
+        expected_nms_threshold=expected_nms_threshold,
+    )
     predictions = predictions[PREDICTION_COLUMNS].copy()
     predictions = _numeric_columns(
         predictions,
@@ -197,6 +335,7 @@ def load_ground_truth(path, sample):
         raise FileNotFoundError(f"Ground-truth cache not found: {source}")
     ground_truth = pd.read_csv(source)
     _required_columns(ground_truth, GROUND_TRUTH_COLUMNS, "Ground-truth cache")
+    _validate_optional_dataset_condition(ground_truth, "Ground-truth cache")
     ground_truth = ground_truth[GROUND_TRUTH_COLUMNS].copy()
     ground_truth = _numeric_columns(
         ground_truth,
@@ -312,7 +451,20 @@ def build_parser():
         description="Compute image-level detector error components."
     )
     parser.add_argument("--sample-index", type=Path, default=DEFAULT_SAMPLE_PATH)
-    parser.add_argument("--predictions", type=Path, default=DEFAULT_PREDICTION_PATH)
+    parser.add_argument("--selection-run", type=Path, default=DEFAULT_SELECTION_RUN)
+    parser.add_argument(
+        "--operating-point",
+        type=Path,
+        default=DEFAULT_OPERATING_POINT,
+    )
+    parser.add_argument(
+        "--predictions",
+        type=Path,
+        help=(
+            "Optional post-NMS cache override. Its model and NMS provenance "
+            "must match the verified upstream decisions."
+        ),
+    )
     parser.add_argument("--ground-truth", type=Path, default=DEFAULT_GROUND_TRUTH_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--max-images", type=positive_int)
@@ -321,8 +473,18 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    prediction_input = resolve_prediction_input(
+        args.predictions,
+        args.selection_run,
+        args.operating_point,
+    )
     sample = load_sample(args.sample_index, args.max_images)
-    predictions = load_predictions(args.predictions, sample)
+    predictions = load_predictions(
+        prediction_input["prediction_path"],
+        sample,
+        expected_model=prediction_input["selected_model"],
+        expected_nms_threshold=prediction_input["nms_threshold"],
+    )
     ground_truth = load_ground_truth(args.ground_truth, sample)
     components = validate_component_table(
         build_component_table(sample, predictions, ground_truth)
@@ -334,6 +496,11 @@ def main(argv=None):
     )
     print(f"[WRITE] {output_path}")
     print(f"[INFO] Images evaluated: {len(components)}")
+    print(
+        "[INFO] Prediction provenance: "
+        f"model={prediction_input['selected_model']} "
+        f"nms_iou={prediction_input['nms_threshold']:.12g}"
+    )
     print(f"[INFO] Predictions evaluated: {int(components['prediction_count'].sum())}")
     print(f"[INFO] Ground truths evaluated: {int(components['ground_truth_count'].sum())}")
     print("\nERROR COMPONENT DISTRIBUTION")

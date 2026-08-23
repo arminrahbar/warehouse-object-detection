@@ -1,5 +1,7 @@
 .venv/
 .env
+.env.*
+!.env.example
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -14,3 +16,19 @@ experiments/notebooks/
 experiments/outputs/
 experiments/figures/
 notebook_text_exports/
+
+# Runtime models and media remain external even if copied outside storage/.
+*.weights
+*.onnx
+*.pt
+*.pth
+*.engine
+*.tflite
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.mpeg
+*.mpg
+*.m4v

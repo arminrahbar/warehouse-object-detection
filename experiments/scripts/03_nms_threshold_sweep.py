@@ -1,6 +1,7 @@
 """Evaluate one cached detector output across controlled NMS IoU thresholds."""
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -23,14 +24,37 @@ from detector_service.modules.utils.metrics import (
     calculate_precision_recall_curve,
     match_detections,
 )
+from experiments.scripts.experiment_contracts import (
+    EvidenceContractError,
+    load_verified_checkpoint_selection,
+    resolve_indexed_path as resolve_contract_path,
+    resolve_selected_model_assets,
+    sha256_file,
+    threshold_tag as contract_threshold_tag,
+)
 
 
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "experiments" / "outputs"
-DEFAULT_SAMPLING_DIR = DEFAULT_OUTPUT_ROOT / "dataset_sampling"
-DEFAULT_OUTPUT_DIR = DEFAULT_OUTPUT_ROOT / "nms_thresholding"
-DEFAULT_FIGURE_DIR = PROJECT_ROOT / "experiments" / "figures" / "03_nms_thresholding"
-DEFAULT_SAMPLE_INDEX = DEFAULT_SAMPLING_DIR / "selected_sample_index.csv"
-DEFAULT_OVERLAP_PROFILE = DEFAULT_SAMPLING_DIR / "overlap_profile.csv"
+DEFAULT_SAMPLE_SELECTION_DIR = (
+    DEFAULT_OUTPUT_ROOT / "02_dataset_analysis" / "02_sample_selection"
+)
+DEFAULT_OVERLAP_DIR = (
+    DEFAULT_OUTPUT_ROOT / "02_dataset_analysis" / "03_overlap_analysis"
+)
+DEFAULT_OUTPUT_DIR = (
+    DEFAULT_OUTPUT_ROOT / "03_nms_thresholding" / "01_threshold_sweep"
+)
+DEFAULT_SELECTION_RUN = (
+    DEFAULT_OUTPUT_ROOT
+    / "01_model_selection"
+    / "03_checkpoint_decision"
+    / "selection-20260821-v1"
+)
+DEFAULT_FIGURE_DIR = (
+    PROJECT_ROOT / "scratch" / "diagnostic-figures" / "03_nms_thresholding"
+)
+DEFAULT_SAMPLE_INDEX = DEFAULT_SAMPLE_SELECTION_DIR / "selected_sample_index.csv"
+DEFAULT_OVERLAP_PROFILE = DEFAULT_OVERLAP_DIR / "overlap_profile.csv"
 DEFAULT_CLASS_FILE = (
     PROJECT_ROOT / "detector_service" / "storage" / "yolo_model_2" / "logistics.names"
 )
@@ -42,12 +66,7 @@ MAP_IOU_THRESHOLD = 0.5
 EVAL_TYPE = "combined"
 NMS_THRESHOLDS = (0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.7)
 DUPLICATE_IOU_THRESHOLD = 0.5
-
-MODEL_ASSET_PATHS = {
-    "weights": "yolo_model_2/yolov4-tiny-logistics_size_416_2.weights",
-    "config": "yolo_model_2/yolov4-tiny-logistics_size_416_2.cfg",
-    "classes": "yolo_model_2/logistics.names",
-}
+INFERENCE_CACHE_SCHEMA_VERSION = 1
 
 RAW_COLUMNS = [
     "model",
@@ -63,6 +82,13 @@ RAW_COLUMNS = [
     "predicted_class_score",
     "combined_confidence",
     "class_scores_json",
+]
+LEDGER_COLUMNS = [
+    "model",
+    "image_file",
+    "image_path",
+    "status",
+    "candidate_count",
 ]
 PREDICTION_COLUMNS = RAW_COLUMNS + ["nms_threshold"]
 GROUND_TRUTH_COLUMNS = [
@@ -116,6 +142,11 @@ SUBSET_COLUMNS = [
     "images_with_duplicate_like_pairs",
     "mean_duplicate_like_pairs_per_image",
 ]
+INFERENCE_CACHE_ARTIFACTS = {
+    "ground_truth": GROUND_TRUTH_COLUMNS,
+    "raw_predictions": RAW_COLUMNS,
+    "inference_ledger": LEDGER_COLUMNS,
+}
 
 
 def positive_int(value):
@@ -174,28 +205,176 @@ def _write_dataframe_atomic(path, table):
         raise
 
 
-def _logical_parts(value):
-    raw = str(value).strip()
-    if not raw:
-        raise ValueError("Asset path cannot be empty.")
-    return PurePosixPath(raw.replace("\\", "/")).parts
+def _write_json_atomic(path, payload):
+    destination = Path(path).expanduser().absolute()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            suffix=".json",
+            prefix=f".{destination.stem}-",
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        temporary_path.replace(destination)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def _ordered_vocabulary_sha256(classes):
+    payload = json.dumps(
+        list(classes),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _selected_index_sha256(index):
+    payload = index.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _require_exact_keys(value, expected, label):
+    if not isinstance(value, dict) or set(value) != set(expected):
+        observed = sorted(value) if isinstance(value, dict) else type(value).__name__
+        raise EvidenceContractError(
+            f"{label} does not match the inference-cache contract: "
+            f"expected={sorted(expected)}, observed={observed}"
+        )
+
+
+def build_inference_cache_manifest(
+    *,
+    sample_index_path,
+    index,
+    selection,
+    classes,
+    class_file,
+    model_name,
+    run_label,
+    artifact_paths,
+    artifact_tables,
+):
+    """Build a content-addressed manifest for validated pre-NMS evidence."""
+
+    sample_source = Path(sample_index_path).expanduser().absolute()
+    vocabulary_source = Path(class_file).expanduser().absolute()
+    artifacts = {}
+    for role in INFERENCE_CACHE_ARTIFACTS:
+        path = Path(artifact_paths[role]).expanduser().absolute()
+        table = artifact_tables[role]
+        if not path.is_file():
+            raise FileNotFoundError(f"Inference-cache artifact not found: {path}")
+        artifacts[role] = {
+            "file_name": path.name,
+            "rows": int(len(table)),
+            "sha256": sha256_file(path),
+        }
+    return {
+        "schema_version": INFERENCE_CACHE_SCHEMA_VERSION,
+        "status": "complete",
+        "run_label": run_label,
+        "sample_index": {
+            "file_name": sample_source.name,
+            "file_sha256": sha256_file(sample_source),
+            "selected_rows": int(len(index)),
+            "selected_rows_sha256": _selected_index_sha256(index),
+        },
+        "checkpoint_selection": {
+            "run_id": selection["selection_run_id"],
+            "manifest_sha256": selection["selection_manifest_sha256"],
+            "decision_sha256": selection["decision_sha256"],
+        },
+        "model": {
+            "dataset": DATASET_NAME,
+            "selected_model": model_name,
+            "asset_identities": dict(selection["model_identity"]),
+        },
+        "vocabulary": {
+            "file_name": vocabulary_source.name,
+            "file_sha256": sha256_file(vocabulary_source),
+            "class_count": len(classes),
+            "ordered_classes_sha256": _ordered_vocabulary_sha256(classes),
+        },
+        "candidate_policy": {
+            "objectness_operator": ">",
+            "objectness_threshold": SCORE_THRESHOLD,
+            "predicted_class_rule": "argmax(class_scores_json)",
+            "combined_confidence_formula": (
+                "object_score * predicted_class_score"
+            ),
+            "postprocessing_confidence_operator": ">=",
+            "postprocessing_confidence_threshold": SCORE_THRESHOLD,
+        },
+        "artifacts": artifacts,
+    }
+
+
+def validate_inference_cache_manifest(
+    manifest_path,
+    *,
+    sample_index_path,
+    index,
+    selection,
+    classes,
+    class_file,
+    model_name,
+    run_label,
+    artifact_paths,
+    artifact_tables,
+):
+    """Verify that cached pre-NMS evidence belongs to this exact experiment run."""
+
+    source = Path(manifest_path).expanduser().absolute()
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Inference-cache manifest not found. Historical raw caches are not "
+            f"trusted; regenerate them with --force: {source}"
+        )
+    try:
+        observed = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise EvidenceContractError(
+            f"Inference-cache manifest is not valid JSON: {source}"
+        ) from error
+    expected = build_inference_cache_manifest(
+        sample_index_path=sample_index_path,
+        index=index,
+        selection=selection,
+        classes=classes,
+        class_file=class_file,
+        model_name=model_name,
+        run_label=run_label,
+        artifact_paths=artifact_paths,
+        artifact_tables=artifact_tables,
+    )
+    _require_exact_keys(observed, expected, "Inference-cache manifest")
+    if observed != expected:
+        raise EvidenceContractError(
+            "Inference-cache manifest is stale or does not match the selected "
+            "index, checkpoint, policy, vocabulary, or cache artifacts."
+        )
+    return observed
 
 
 def resolve_indexed_path(value, asset_root=None, project_root=PROJECT_ROOT):
-    """Resolve a logical index path through an optional external storage root."""
+    """Resolve a logical index path while enforcing root containment."""
 
-    direct = Path(str(value)).expanduser()
-    if direct.is_absolute():
-        return direct
-    parts = _logical_parts(value)
-    if asset_root is not None and len(parts) >= 2:
-        supported = {
-            ("detector_service", "storage"),
-            ("techtrack", "storage"),
-        }
-        if tuple(parts[:2]) in supported:
-            return Path(asset_root).expanduser().absolute().joinpath(*parts[2:])
-    return Path(project_root).joinpath(*parts)
+    return resolve_contract_path(
+        value,
+        asset_root=asset_root,
+        project_root=project_root,
+    )
 
 
 def load_sample_index(path, max_images=None):
@@ -229,66 +408,72 @@ def load_sample_index(path, max_images=None):
     return index
 
 
-def _class_mapping_from_evidence(paths):
-    rows = []
-    for path in paths:
-        if path is None:
-            continue
-        source = Path(path).expanduser().absolute()
-        if source.is_file():
-            table = pd.read_csv(source, usecols=["class_id", "class_name"])
-            rows.append(table)
-    if not rows:
-        return None
+def load_classes(class_file, expected_sha256=None):
+    """Load a complete, ordered ``.names`` vocabulary with optional identity proof."""
 
-    combined = pd.concat(rows, ignore_index=True).drop_duplicates()
-    combined["class_id"] = _validated_integer_series(combined["class_id"], "class_id")
-    mapping = {}
-    for row in combined.itertuples(index=False):
-        class_id = int(row.class_id)
-        class_name = str(row.class_name).strip()
-        if not class_name:
-            raise ValueError("Cached class names must be non-empty.")
-        if class_id in mapping and mapping[class_id] != class_name:
-            raise ValueError(
-                f"Conflicting names for class {class_id}: "
-                f"{mapping[class_id]!r} and {class_name!r}"
-            )
-        mapping[class_id] = class_name
-    if not mapping:
-        raise ValueError("Cached experiment evidence contains no class mapping.")
-    expected = list(range(max(mapping) + 1))
-    if sorted(mapping) != expected:
-        raise ValueError(
-            "Cached class mapping must contain contiguous IDs from zero."
+    source = Path(class_file).expanduser().absolute()
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Verified full class vocabulary not found. Cached detections cannot prove "
+            f"that trailing unseen classes are absent: {source}"
         )
-    return [mapping[class_id] for class_id in expected]
+    if expected_sha256 is not None and sha256_file(source) != expected_sha256:
+        raise EvidenceContractError(
+            "Class-name file hash does not match the selected checkpoint identity: "
+            f"{source}"
+        )
+    classes = [
+        line.strip()
+        for line in source.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if not classes:
+        raise ValueError(f"Class-name file is empty: {source}")
+    if len(classes) != len(set(classes)):
+        raise ValueError("Class names must be unique.")
+    return classes
 
 
-def load_classes(class_file=None, evidence_paths=()):
-    """Load the class vocabulary from a names file or consistent cache evidence."""
+def _canonical_logical_image_path(value):
+    """Normalize an indexed image path without weakening its logical identity."""
 
-    source = Path(class_file).expanduser().absolute() if class_file else None
-    if source is not None and source.is_file():
-        classes = [
-            line.strip()
-            for line in source.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-        if not classes:
-            raise ValueError(f"Class-name file is empty: {source}")
-        if len(classes) != len(set(classes)):
-            raise ValueError("Class names must be unique.")
-        return classes
-
-    cached = _class_mapping_from_evidence(evidence_paths)
-    if cached is not None:
-        print("[INFO] Loaded class names from cached experiment evidence.")
-        return cached
-    location = source or DEFAULT_CLASS_FILE
-    raise FileNotFoundError(
-        f"Class-name file not found: {location}. No complete cached mapping is available."
+    raw = str(value).strip().replace("\\", "/")
+    if not raw or raw.lower() == "nan":
+        raise ValueError("image_path values must be non-empty.")
+    parts = tuple(
+        part for part in PurePosixPath(raw).parts if part not in ("", ".", "/")
     )
+    if ".." in parts:
+        raise ValueError("image_path values cannot contain parent traversal.")
+    if parts[:2] in {
+        ("detector_service", "storage"),
+        ("techtrack", "storage"),
+    }:
+        return ("storage", *parts[2:])
+    return ("logical", *parts)
+
+
+def _validate_image_paths_against_index(table, index, label):
+    """Bind every evidence row to the selected index's path for its image file."""
+
+    expected = {
+        str(row.image_file): _canonical_logical_image_path(row.image_path)
+        for row in index.itertuples(index=False)
+    }
+    for row_number, row in enumerate(
+        table[["image_file", "image_path"]].itertuples(index=False),
+        start=1,
+    ):
+        image_file = str(row.image_file)
+        if image_file not in expected:
+            raise ValueError(f"{label} contains images outside the selected index.")
+        observed = _canonical_logical_image_path(row.image_path)
+        if observed != expected[image_file]:
+            raise ValueError(
+                f"{label} row {row_number} image_path does not match the selected "
+                f"index for {image_file!r}."
+            )
+    return table
 
 
 def _validate_class_identity(table, classes, label):
@@ -319,9 +504,7 @@ def validate_ground_truth(table, index, classes):
     )
     if (normalized[["bbox_w", "bbox_h"]] < 0).any().any():
         raise ValueError("Ground-truth widths and heights must be non-negative.")
-    selected_files = set(index["image_file"])
-    if not set(normalized["image_file"]).issubset(selected_files):
-        raise ValueError("Ground-truth cache contains images outside the selected index.")
+    _validate_image_paths_against_index(normalized, index, "Ground-truth cache")
 
     observed = normalized.groupby("image_file").size()
     expected = index.set_index("image_file")["num_objects"]
@@ -346,7 +529,7 @@ def _parse_score_vector(serialized, row_number, classes):
     return values
 
 
-def validate_raw_predictions(table, index, classes):
+def validate_raw_predictions(table, index, classes, model_name=MODEL_NAME):
     """Validate raw cached detections and their derived score fields."""
 
     _required_columns(table, RAW_COLUMNS, "Raw-prediction cache")
@@ -367,20 +550,28 @@ def validate_raw_predictions(table, index, classes):
         ],
         "Raw-prediction cache",
     )
-    if set(normalized["model"].astype(str)) != {MODEL_NAME}:
-        raise ValueError(f"Raw-prediction cache must contain only {MODEL_NAME} rows.")
+    if set(normalized["model"].astype(str)) != {model_name}:
+        raise ValueError(
+            f"Raw-prediction cache must contain only {model_name} rows."
+        )
     if (normalized[["bbox_w", "bbox_h"]] < 0).any().any():
         raise ValueError("Raw-prediction widths and heights must be non-negative.")
     for column in ("object_score", "predicted_class_score", "combined_confidence"):
         if not normalized[column].between(0.0, 1.0).all():
             raise ValueError(f"Raw-prediction {column} values must be probabilities.")
-    if not set(normalized["image_file"]).issubset(set(index["image_file"])):
-        raise ValueError("Raw-prediction cache contains images outside the selected index.")
+    _validate_image_paths_against_index(normalized, index, "Raw-prediction cache")
 
     predicted_scores = []
+    predicted_class_ids = []
     for position, row in enumerate(normalized.itertuples(index=False), start=1):
         vector = _parse_score_vector(row.class_scores_json, position, classes)
         predicted_scores.append(float(vector[int(row.class_id)]))
+        predicted_class_ids.append(int(np.argmax(vector)))
+    if not np.array_equal(
+        normalized["class_id"].to_numpy(dtype=np.int64),
+        np.asarray(predicted_class_ids, dtype=np.int64),
+    ):
+        raise ValueError("Raw-prediction class_id must equal argmax(class_scores_json).")
     if not np.allclose(
         normalized["predicted_class_score"],
         predicted_scores,
@@ -396,6 +587,49 @@ def validate_raw_predictions(table, index, classes):
         atol=1e-15,
     ):
         raise ValueError("Combined confidence does not equal objectness times class probability.")
+    return normalized.reset_index(drop=True)
+
+
+def validate_inference_ledger(table, index, raw_predictions, model_name=MODEL_NAME):
+    """Prove that inference completed once for every selected image."""
+
+    _required_columns(table, LEDGER_COLUMNS, "Inference ledger")
+    normalized = table[LEDGER_COLUMNS].copy()
+    if len(normalized) != len(index):
+        raise ValueError(
+            "Inference ledger row count does not match the selected-image count."
+        )
+    if normalized["image_file"].duplicated().any():
+        raise ValueError("Inference ledger contains duplicate image_file values.")
+    if set(normalized["model"].astype(str)) != {model_name}:
+        raise ValueError(f"Inference ledger must contain only {model_name} rows.")
+    if set(normalized["status"].astype(str)) != {"processed"}:
+        raise ValueError("Every inference-ledger row must have status='processed'.")
+
+    expected_files = index["image_file"].astype(str).tolist()
+    observed_files = normalized["image_file"].astype(str).tolist()
+    if observed_files != expected_files:
+        raise ValueError(
+            "Inference ledger image order does not match the selected index."
+        )
+    _validate_image_paths_against_index(normalized, index, "Inference ledger")
+    normalized["candidate_count"] = _validated_integer_series(
+        normalized["candidate_count"],
+        "Inference-ledger candidate_count",
+    )
+    actual_counts = (
+        raw_predictions.groupby("image_file").size()
+        if not raw_predictions.empty
+        else pd.Series(dtype="int64")
+    )
+    expected_counts = normalized["image_file"].map(actual_counts).fillna(0).astype("int64")
+    if not np.array_equal(
+        normalized["candidate_count"].to_numpy(),
+        expected_counts.to_numpy(),
+    ):
+        raise ValueError(
+            "Inference-ledger candidate counts do not match the raw-prediction cache."
+        )
     return normalized.reset_index(drop=True)
 
 
@@ -519,19 +753,20 @@ def build_ground_truth(index, classes, asset_root=None, image_reader=None, progr
     return pd.DataFrame(rows, columns=GROUND_TRUTH_COLUMNS)
 
 
-def _resolve_model_assets(asset_root):
-    if asset_root is None:
-        root = PROJECT_ROOT / "detector_service" / "storage"
-    else:
-        root = Path(asset_root).expanduser().absolute()
-    paths = {name: root / relative for name, relative in MODEL_ASSET_PATHS.items()}
-    missing = [f"{name}: {path}" for name, path in paths.items() if not path.is_file()]
-    if missing:
-        raise FileNotFoundError("Missing model assets: " + "; ".join(missing))
-    return paths
+def _resolve_model_assets(asset_root, selection_run):
+    root = asset_root or PROJECT_ROOT / "detector_service" / "storage"
+    return resolve_selected_model_assets(root, selection_run)
 
 
-def _serialize_raw_detection(image_row, bbox, class_id, object_score, score_vector, classes):
+def _serialize_raw_detection(
+    image_row,
+    bbox,
+    class_id,
+    object_score,
+    score_vector,
+    classes,
+    model_name=MODEL_NAME,
+):
     probabilities = np.asarray(score_vector, dtype=float).reshape(-1)
     if len(probabilities) != len(classes):
         raise ValueError("Detector class-score vector length does not match the vocabulary.")
@@ -541,7 +776,7 @@ def _serialize_raw_detection(image_row, bbox, class_id, object_score, score_vect
     predicted_score = float(probabilities[class_id])
     objectness = float(object_score)
     return {
-        "model": MODEL_NAME,
+        "model": model_name,
         "image_file": image_row.image_file,
         "image_path": image_row.image_path,
         "bbox_x": float(bbox[0]),
@@ -564,14 +799,42 @@ def run_raw_inference(
     image_reader=None,
     detector_factory=None,
     progress_interval=250,
+    model_name=MODEL_NAME,
+    model_assets=None,
+    selection_run=None,
+    expected_names_sha256=None,
+    ledger_rows=None,
 ):
-    """Run Model 2 once and retain pre-NMS candidate evidence."""
+    """Run the selected checkpoint once and retain pre-NMS evidence."""
 
     if image_reader is None:
         import cv2
 
         image_reader = cv2.imread
-    paths = _resolve_model_assets(asset_root)
+    if model_assets is None:
+        if selection_run is None:
+            raise ValueError(
+                "selection_run is required when model assets are not pre-resolved."
+            )
+        resolved = _resolve_model_assets(asset_root, selection_run)
+        model_name = resolved["selected_model"]
+        paths = resolved["resolved_paths"]
+        expected_names_sha256 = resolved["model_identity"]["names"]
+    else:
+        paths = {name: Path(path) for name, path in model_assets.items()}
+        if expected_names_sha256 is None:
+            raise ValueError(
+                "expected_names_sha256 is required with pre-resolved model assets."
+            )
+    model_classes = load_classes(
+        paths["classes"],
+        expected_sha256=expected_names_sha256,
+    )
+    if list(classes) != model_classes:
+        raise EvidenceContractError(
+            "Inference class vocabulary does not match the selected checkpoint's "
+            "ordered .names vocabulary."
+        )
     if detector_factory is None:
         from detector_service.modules.inference.model import Detector
 
@@ -595,7 +858,24 @@ def run_raw_inference(
         if len(lengths) != 1:
             raise ValueError("Detector output collections must have equal lengths.")
         for values in zip(boxes, class_ids, object_scores, class_scores):
-            rows.append(_serialize_raw_detection(image_row, *values, classes))
+            rows.append(
+                _serialize_raw_detection(
+                    image_row,
+                    *values,
+                    classes,
+                    model_name=model_name,
+                )
+            )
+        if ledger_rows is not None:
+            ledger_rows.append(
+                {
+                    "model": model_name,
+                    "image_file": image_row.image_file,
+                    "image_path": image_row.image_path,
+                    "status": "processed",
+                    "candidate_count": len(boxes),
+                }
+            )
         if progress_interval and position % progress_interval == 0:
             elapsed = time.perf_counter() - start
             print(
@@ -606,10 +886,16 @@ def run_raw_inference(
 
 
 def threshold_tag(threshold):
-    return format(float(threshold), "g").replace(".", "_")
+    return contract_threshold_tag(threshold)
 
 
-def apply_nms_threshold(raw_predictions, index, classes, nms_threshold):
+def apply_nms_threshold(
+    raw_predictions,
+    index,
+    classes,
+    nms_threshold,
+    model_name=MODEL_NAME,
+):
     """Apply the project class-aware NMS implementation at one IoU threshold."""
 
     threshold = float(nms_threshold)
@@ -632,7 +918,12 @@ def apply_nms_threshold(raw_predictions, index, classes, nms_threshold):
         class_scores = [json.loads(value) for value in group["class_scores_json"]]
         retained = nms.filter(boxes, class_ids, object_scores, class_scores)
         for values in zip(*retained):
-            row = _serialize_raw_detection(image_row, *values, classes)
+            row = _serialize_raw_detection(
+                image_row,
+                *values,
+                classes,
+                model_name=model_name,
+            )
             row["nms_threshold"] = threshold
             rows.append(row)
     return pd.DataFrame(rows, columns=PREDICTION_COLUMNS)
@@ -675,7 +966,14 @@ def build_metric_lists(index, predictions, ground_truth):
     return boxes, classes, scores, class_scores, truth_boxes, truth_classes
 
 
-def evaluate_predictions(index, predictions, ground_truth, classes, nms_threshold):
+def evaluate_predictions(
+    index,
+    predictions,
+    ground_truth,
+    classes,
+    nms_threshold,
+    model_name=MODEL_NAME,
+):
     """Calculate per-class 11-point AP and aggregate mAP at IoU 0.50."""
 
     metric_lists = build_metric_lists(index, predictions, ground_truth)
@@ -712,7 +1010,7 @@ def evaluate_predictions(index, predictions, ground_truth, classes, nms_threshol
         )
         per_class.append(
             {
-                "model": MODEL_NAME,
+                "model": model_name,
                 "dataset": DATASET_NAME,
                 "nms_threshold": float(nms_threshold),
                 "class_id": class_id,
@@ -723,7 +1021,7 @@ def evaluate_predictions(index, predictions, ground_truth, classes, nms_threshol
             }
         )
     summary = {
-        "model": MODEL_NAME,
+        "model": model_name,
         "dataset": DATASET_NAME,
         "nms_threshold": float(nms_threshold),
         "mAP@0.5_11_point": map_score,
@@ -772,7 +1070,15 @@ def count_duplicate_like_prediction_pairs(predictions, iou_threshold=DUPLICATE_I
     }
 
 
-def evaluate_subset(subset_name, subset_index, predictions, ground_truth, classes, threshold):
+def evaluate_subset(
+    subset_name,
+    subset_index,
+    predictions,
+    ground_truth,
+    classes,
+    threshold,
+    model_name=MODEL_NAME,
+):
     files = set(subset_index["image_file"])
     subset_predictions = predictions[predictions["image_file"].isin(files)].copy()
     subset_truth = ground_truth[ground_truth["image_file"].isin(files)].copy()
@@ -782,6 +1088,7 @@ def evaluate_subset(subset_name, subset_index, predictions, ground_truth, classe
         subset_truth,
         classes,
         threshold,
+        model_name=model_name,
     )
     duplicates = count_duplicate_like_prediction_pairs(subset_predictions)
     return {
@@ -796,9 +1103,60 @@ def evaluate_subset(subset_name, subset_index, predictions, ground_truth, classe
     }
 
 
-def _prediction_path(output_dir, threshold, run_label):
+def validate_prediction_cache(
+    table,
+    raw_predictions,
+    index,
+    classes,
+    threshold,
+    model_name=MODEL_NAME,
+):
+    """Validate a post-NMS cache and prove that it derives from the raw cache."""
+
+    _required_columns(table, PREDICTION_COLUMNS, "NMS prediction cache")
+    normalized = validate_raw_predictions(
+        table[RAW_COLUMNS],
+        index,
+        classes,
+        model_name=model_name,
+    )
+    thresholds = pd.to_numeric(table["nms_threshold"], errors="raise")
+    if not np.isfinite(thresholds.to_numpy(dtype=float)).all() or not np.allclose(
+        thresholds,
+        float(threshold),
+        rtol=0.0,
+        atol=1e-12,
+    ):
+        raise ValueError("NMS prediction cache uses the wrong threshold.")
+    normalized["nms_threshold"] = thresholds.to_numpy(dtype=float)
+    normalized = normalized[PREDICTION_COLUMNS].reset_index(drop=True)
+    expected = apply_nms_threshold(
+        raw_predictions,
+        index,
+        classes,
+        threshold,
+        model_name=model_name,
+    ).reset_index(drop=True)
+    try:
+        pd.testing.assert_frame_equal(
+            normalized,
+            expected,
+            check_dtype=False,
+            check_exact=False,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+    except AssertionError as error:
+        raise EvidenceContractError(
+            "NMS prediction cache does not match recomputation from the "
+            "validated raw-prediction cache."
+        ) from error
+    return normalized
+
+
+def _prediction_path(output_dir, threshold, run_label, model_name=MODEL_NAME):
     return Path(output_dir) / (
-        f"{MODEL_NAME}_predictions_nms_{threshold_tag(threshold)}_{run_label}.csv"
+        f"{model_name}_predictions_nms_{threshold_tag(threshold)}_{run_label}.csv"
     )
 
 
@@ -811,6 +1169,7 @@ def run_threshold_sweep(
     output_dir,
     run_label,
     refresh_postprocessing=False,
+    model_name=MODEL_NAME,
 ):
     """Apply all thresholds and assemble four auditable result tables."""
 
@@ -821,13 +1180,25 @@ def run_threshold_sweep(
         "crowded_any_overlap": crowded_index,
     }
     for threshold in NMS_THRESHOLDS:
-        path = _prediction_path(output_dir, threshold, run_label)
+        path = _prediction_path(output_dir, threshold, run_label, model_name)
         if path.is_file() and not refresh_postprocessing:
             predictions = pd.read_csv(path)
-            _required_columns(predictions, PREDICTION_COLUMNS, "NMS prediction cache")
-            predictions = predictions[PREDICTION_COLUMNS]
+            predictions = validate_prediction_cache(
+                predictions,
+                raw_predictions,
+                index,
+                classes,
+                threshold,
+                model_name=model_name,
+            )
         else:
-            predictions = apply_nms_threshold(raw_predictions, index, classes, threshold)
+            predictions = apply_nms_threshold(
+                raw_predictions,
+                index,
+                classes,
+                threshold,
+                model_name=model_name,
+            )
             _write_dataframe_atomic(path, predictions)
             print(f"[WRITE] {path} rows={len(predictions)}")
 
@@ -837,6 +1208,7 @@ def run_threshold_sweep(
             ground_truth,
             classes,
             threshold,
+            model_name=model_name,
         )
         duplicates = count_duplicate_like_prediction_pairs(predictions)
         duplicates["nms_threshold"] = float(threshold)
@@ -853,6 +1225,7 @@ def run_threshold_sweep(
                     ground_truth,
                     classes,
                     threshold,
+                    model_name=model_name,
                 )
             )
 
@@ -885,6 +1258,440 @@ def write_sweep_artifacts(output_dir, artifacts):
     return output_paths
 
 
+def build_operating_point_record(
+    summary,
+    duplicates,
+    summary_path,
+    duplicate_path,
+    selection,
+):
+    """Select and record the quality-first NMS operating point."""
+
+    _required_columns(summary, SUMMARY_COLUMNS, "NMS summary")
+    _required_columns(duplicates, DUPLICATE_COLUMNS, "NMS duplicate summary")
+    if len(summary) != len(NMS_THRESHOLDS) or len(duplicates) != len(NMS_THRESHOLDS):
+        raise EvidenceContractError(
+            "NMS operating-point selection requires one row per declared threshold."
+        )
+    observed = sorted(float(value) for value in summary["nms_threshold"])
+    expected = sorted(float(value) for value in NMS_THRESHOLDS)
+    if not np.allclose(observed, expected, rtol=0.0, atol=1e-12):
+        raise EvidenceContractError(
+            "NMS summary thresholds do not match the declared sweep."
+        )
+    if set(summary["model"].astype(str)) != {selection["selected_model"]}:
+        raise EvidenceContractError(
+            "NMS summary model does not match the checkpoint-selection decision."
+        )
+
+    ranked = summary.sort_values(
+        ["mAP@0.5_11_point", "total_predictions_after_nms", "nms_threshold"],
+        ascending=[False, True, True],
+        kind="mergesort",
+    )
+    selected = ranked.iloc[0]
+    threshold = float(selected["nms_threshold"])
+    duplicate_row = duplicates.loc[
+        np.isclose(
+            pd.to_numeric(duplicates["nms_threshold"], errors="raise"),
+            threshold,
+            rtol=0.0,
+            atol=1e-12,
+        )
+    ]
+    if len(duplicate_row) != 1:
+        raise EvidenceContractError(
+            "Duplicate diagnostics do not identify the selected NMS threshold uniquely."
+        )
+    duplicate_row = duplicate_row.iloc[0]
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "selected_model": selection["selected_model"],
+        "selected_nms_iou_threshold": threshold,
+        "selection_rule": (
+            "maximize threshold-constrained 11-point AP50; then minimize retained "
+            "predictions; then choose the lower IoU threshold"
+        ),
+        "selected_metrics": {
+            "mAP@0.5_11_point": float(selected["mAP@0.5_11_point"]),
+            "total_predictions_after_nms": int(
+                selected["total_predictions_after_nms"]
+            ),
+            "duplicate_like_pairs_iou_gt_0_5": int(
+                duplicate_row["duplicate_like_pairs_iou_gt_0_5"]
+            ),
+        },
+        "checkpoint_selection": {
+            "run_id": selection["selection_run_id"],
+            "manifest_sha256": selection["selection_manifest_sha256"],
+            "decision_sha256": selection["decision_sha256"],
+        },
+        "evidence": {
+            Path(summary_path).name: {
+                "rows": int(len(summary)),
+                "sha256": sha256_file(summary_path),
+            },
+            Path(duplicate_path).name: {
+                "rows": int(len(duplicates)),
+                "sha256": sha256_file(duplicate_path),
+            },
+        },
+    }
+
+
+def write_operating_point(output_dir, artifacts, output_paths, selection, run_label):
+    summary_name = f"nms_threshold_summary_{run_label}.csv"
+    duplicate_name = f"duplicate_summary_by_threshold_{run_label}.csv"
+    record = build_operating_point_record(
+        artifacts[summary_name],
+        artifacts[duplicate_name],
+        output_paths[summary_name],
+        output_paths[duplicate_name],
+        selection,
+    )
+    return _write_json_atomic(Path(output_dir) / "operating_point.json", record)
+
+
+def _normalize_derived_thresholds(table, label, expected_rows_per_threshold):
+    values = pd.to_numeric(table["nms_threshold"], errors="raise").to_numpy(
+        dtype=float
+    )
+    if not np.isfinite(values).all():
+        raise EvidenceContractError(f"{label} contains non-finite NMS thresholds.")
+    declared = np.asarray(NMS_THRESHOLDS, dtype=float)
+    normalized = []
+    for value in values:
+        matches = np.flatnonzero(
+            np.isclose(declared, value, rtol=0.0, atol=1e-12)
+        )
+        if len(matches) != 1:
+            raise EvidenceContractError(
+                f"{label} contains an undeclared NMS threshold: {value}"
+            )
+        normalized.append(float(declared[int(matches[0])]))
+    counts = pd.Series(normalized).value_counts().to_dict()
+    expected = {
+        float(threshold): int(expected_rows_per_threshold)
+        for threshold in NMS_THRESHOLDS
+    }
+    if counts != expected:
+        raise EvidenceContractError(
+            f"{label} does not contain the required rows for every NMS threshold."
+        )
+    result = table.copy()
+    result["nms_threshold"] = normalized
+    return result
+
+
+def _validate_probability_column(table, column, label):
+    values = pd.to_numeric(table[column], errors="raise").to_numpy(dtype=float)
+    if not np.isfinite(values).all() or ((values < 0.0) | (values > 1.0)).any():
+        raise EvidenceContractError(
+            f"{label} {column} must contain finite values between zero and one."
+        )
+    return values
+
+
+def validate_derived_artifacts(artifacts, run_label):
+    """Validate the complete four-table result package used by figures-only mode."""
+
+    schemas = {
+        f"nms_threshold_summary_{run_label}.csv": SUMMARY_COLUMNS,
+        f"per_class_ap_by_threshold_{run_label}.csv": PER_CLASS_COLUMNS,
+        f"duplicate_summary_by_threshold_{run_label}.csv": DUPLICATE_COLUMNS,
+        f"subset_summary_by_threshold_{run_label}.csv": SUBSET_COLUMNS,
+    }
+    _require_exact_keys(artifacts, schemas, "Derived NMS artifact package")
+    normalized = {}
+    for name, columns in schemas.items():
+        table = artifacts[name]
+        if list(table.columns) != columns:
+            raise EvidenceContractError(
+                f"{name} schema mismatch: expected={columns}, "
+                f"observed={list(table.columns)}"
+            )
+        normalized[name] = table.copy()
+
+    summary_name = f"nms_threshold_summary_{run_label}.csv"
+    class_name = f"per_class_ap_by_threshold_{run_label}.csv"
+    duplicate_name = f"duplicate_summary_by_threshold_{run_label}.csv"
+    subset_name = f"subset_summary_by_threshold_{run_label}.csv"
+    summary = _normalize_derived_thresholds(
+        normalized[summary_name],
+        "NMS threshold summary",
+        1,
+    )
+    if summary.empty:
+        raise EvidenceContractError("NMS threshold summary cannot be empty.")
+    models = set(summary["model"].astype(str))
+    if len(models) != 1 or not models.issubset({"model1", "model2"}):
+        raise EvidenceContractError("NMS summary must identify exactly one supported model.")
+    model_name = next(iter(models))
+    if set(summary["dataset"].astype(str)) != {DATASET_NAME}:
+        raise EvidenceContractError("NMS summary dataset policy does not match this experiment.")
+    if set(summary["eval_type"].astype(str)) != {EVAL_TYPE}:
+        raise EvidenceContractError("NMS summary evaluation policy does not match this experiment.")
+    for column, expected_value in (
+        ("score_threshold", SCORE_THRESHOLD),
+        ("map_iou_threshold", MAP_IOU_THRESHOLD),
+    ):
+        values = pd.to_numeric(summary[column], errors="raise").to_numpy(dtype=float)
+        if not np.isfinite(values).all() or not np.allclose(
+            values,
+            expected_value,
+            rtol=0.0,
+            atol=1e-12,
+        ):
+            raise EvidenceContractError(
+                f"NMS summary {column} policy does not match this experiment."
+            )
+    summary["mAP@0.5_11_point"] = _validate_probability_column(
+        summary,
+        "mAP@0.5_11_point",
+        "NMS summary",
+    )
+    for column in (
+        "total_ground_truth",
+        "total_predictions_after_nms",
+        "evaluation_rows",
+    ):
+        summary[column] = _validated_integer_series(
+            summary[column],
+            f"NMS summary {column}",
+        )
+    if summary["total_ground_truth"].nunique() != 1:
+        raise EvidenceContractError(
+            "NMS summary ground-truth count must be constant across thresholds."
+        )
+    if not summary["evaluation_rows"].equals(
+        summary["total_predictions_after_nms"]
+    ):
+        raise EvidenceContractError(
+            "NMS summary evaluation rows must equal retained prediction rows."
+        )
+
+    per_class_source = normalized[class_name]
+    if per_class_source.empty or len(per_class_source) % len(NMS_THRESHOLDS):
+        raise EvidenceContractError(
+            "Per-class NMS results must contain the same non-empty vocabulary "
+            "for every threshold."
+        )
+    class_count = len(per_class_source) // len(NMS_THRESHOLDS)
+    per_class = _normalize_derived_thresholds(
+        per_class_source,
+        "Per-class NMS results",
+        class_count,
+    )
+    if set(per_class["model"].astype(str)) != {model_name}:
+        raise EvidenceContractError("Per-class results use a different model.")
+    if set(per_class["dataset"].astype(str)) != {DATASET_NAME}:
+        raise EvidenceContractError("Per-class results use a different dataset.")
+    per_class["class_id"] = _validated_integer_series(
+        per_class["class_id"],
+        "Per-class class_id",
+    )
+    for column in ("ground_truth_count", "prediction_count"):
+        per_class[column] = _validated_integer_series(
+            per_class[column],
+            f"Per-class {column}",
+        )
+    per_class["ap_11_point"] = _validate_probability_column(
+        per_class,
+        "ap_11_point",
+        "Per-class results",
+    )
+    expected_class_ids = list(range(class_count))
+    canonical_class_names = None
+    summary_by_threshold = {
+        float(row["nms_threshold"]): row for _, row in summary.iterrows()
+    }
+    for threshold, group in per_class.groupby("nms_threshold", sort=False):
+        ordered = group.sort_values("class_id")
+        if ordered["class_id"].tolist() != expected_class_ids:
+            raise EvidenceContractError(
+                "Per-class results must contain each contiguous class ID exactly once "
+                "per threshold."
+            )
+        names = ordered["class_name"].astype(str).tolist()
+        if any(not name.strip() for name in names):
+            raise EvidenceContractError("Per-class names must be non-empty.")
+        if canonical_class_names is None:
+            canonical_class_names = names
+        elif names != canonical_class_names:
+            raise EvidenceContractError(
+                "Per-class vocabulary changes between NMS thresholds."
+            )
+        summary_row = summary_by_threshold[float(threshold)]
+        if int(ordered["ground_truth_count"].sum()) != int(
+            summary_row["total_ground_truth"]
+        ):
+            raise EvidenceContractError(
+                "Per-class ground-truth counts do not reconcile with the summary."
+            )
+        if int(ordered["prediction_count"].sum()) != int(
+            summary_row["total_predictions_after_nms"]
+        ):
+            raise EvidenceContractError(
+                "Per-class prediction counts do not reconcile with the summary."
+            )
+        if not np.isclose(
+            float(ordered["ap_11_point"].mean()),
+            float(summary_row["mAP@0.5_11_point"]),
+            rtol=0.0,
+            atol=1e-12,
+        ):
+            raise EvidenceContractError(
+                "Mean per-class AP does not reconcile with summary mAP."
+            )
+
+    duplicates = _normalize_derived_thresholds(
+        normalized[duplicate_name],
+        "Duplicate diagnostics",
+        1,
+    )
+    for column in (
+        "duplicate_like_pairs_iou_gt_0_5",
+        "images_with_duplicate_like_pairs",
+        "total_predictions_after_nms",
+    ):
+        duplicates[column] = _validated_integer_series(
+            duplicates[column],
+            f"Duplicate diagnostics {column}",
+        )
+    duplicate_means = pd.to_numeric(
+        duplicates["mean_duplicate_like_pairs_per_image"],
+        errors="raise",
+    ).to_numpy(dtype=float)
+    if not np.isfinite(duplicate_means).all() or (duplicate_means < 0.0).any():
+        raise EvidenceContractError(
+            "Duplicate diagnostic means must be finite and non-negative."
+        )
+    duplicates["mean_duplicate_like_pairs_per_image"] = duplicate_means
+    duplicates_by_threshold = {
+        float(row["nms_threshold"]): row for _, row in duplicates.iterrows()
+    }
+    for threshold, summary_row in summary_by_threshold.items():
+        duplicate_row = duplicates_by_threshold[threshold]
+        if int(duplicate_row["total_predictions_after_nms"]) != int(
+            summary_row["total_predictions_after_nms"]
+        ):
+            raise EvidenceContractError(
+                "Duplicate diagnostics do not reconcile with summary prediction counts."
+            )
+
+    subsets = _normalize_derived_thresholds(
+        normalized[subset_name],
+        "NMS subset summary",
+        2,
+    )
+    for column in (
+        "image_count",
+        "ground_truth_count",
+        "total_predictions_after_nms",
+        "evaluation_rows",
+        "duplicate_like_pairs_iou_gt_0_5",
+        "images_with_duplicate_like_pairs",
+    ):
+        subsets[column] = _validated_integer_series(
+            subsets[column],
+            f"NMS subset summary {column}",
+        )
+    subsets["mAP@0.5_11_point"] = _validate_probability_column(
+        subsets,
+        "mAP@0.5_11_point",
+        "NMS subset summary",
+    )
+    subset_means = pd.to_numeric(
+        subsets["mean_duplicate_like_pairs_per_image"],
+        errors="raise",
+    ).to_numpy(dtype=float)
+    if not np.isfinite(subset_means).all() or (subset_means < 0.0).any():
+        raise EvidenceContractError(
+            "NMS subset duplicate means must be finite and non-negative."
+        )
+    subsets["mean_duplicate_like_pairs_per_image"] = subset_means
+    if not subsets["evaluation_rows"].equals(
+        subsets["total_predictions_after_nms"]
+    ):
+        raise EvidenceContractError(
+            "NMS subset evaluation rows must equal retained prediction rows."
+        )
+    expected_subsets = {"all_selected", "crowded_any_overlap"}
+    if set(subsets["subset_name"].astype(str)) != expected_subsets:
+        raise EvidenceContractError("NMS subset identities do not match the experiment.")
+    for name, group in subsets.groupby("subset_name"):
+        if group["image_count"].nunique() != 1:
+            raise EvidenceContractError(
+                f"NMS subset image count changes across thresholds: {name}"
+            )
+    for threshold, group in subsets.groupby("nms_threshold", sort=False):
+        if set(group["subset_name"].astype(str)) != expected_subsets:
+            raise EvidenceContractError(
+                "Every NMS threshold must contain both declared subsets."
+            )
+        indexed = group.set_index("subset_name")
+        all_row = indexed.loc["all_selected"]
+        crowded_row = indexed.loc["crowded_any_overlap"]
+        summary_row = summary_by_threshold[float(threshold)]
+        duplicate_row = duplicates_by_threshold[float(threshold)]
+        exact_pairs = (
+            ("ground_truth_count", "total_ground_truth"),
+            ("total_predictions_after_nms", "total_predictions_after_nms"),
+            ("evaluation_rows", "evaluation_rows"),
+        )
+        for subset_column, summary_column in exact_pairs:
+            if int(all_row[subset_column]) != int(
+                summary_row[summary_column]
+            ):
+                raise EvidenceContractError(
+                    "All-selected subset counts do not reconcile with the NMS summary."
+                )
+        if not np.isclose(
+            float(all_row["mAP@0.5_11_point"]),
+            float(summary_row["mAP@0.5_11_point"]),
+            rtol=0.0,
+            atol=1e-12,
+        ):
+            raise EvidenceContractError(
+                "All-selected subset mAP does not reconcile with the NMS summary."
+            )
+        for column in (
+            "duplicate_like_pairs_iou_gt_0_5",
+            "images_with_duplicate_like_pairs",
+        ):
+            if int(all_row[column]) != int(duplicate_row[column]):
+                raise EvidenceContractError(
+                    "All-selected subset duplicate counts do not reconcile with "
+                    "duplicate diagnostics."
+                )
+        if not np.isclose(
+            float(all_row["mean_duplicate_like_pairs_per_image"]),
+            float(duplicate_row["mean_duplicate_like_pairs_per_image"]),
+            rtol=0.0,
+            atol=1e-12,
+        ):
+            raise EvidenceContractError(
+                "All-selected subset duplicate mean does not reconcile with diagnostics."
+            )
+        for column in (
+            "image_count",
+            "ground_truth_count",
+            "total_predictions_after_nms",
+            "evaluation_rows",
+        ):
+            if int(crowded_row[column]) > int(all_row[column]):
+                raise EvidenceContractError(
+                    "Crowded-subset counts cannot exceed all-selected counts."
+                )
+
+    normalized[summary_name] = summary
+    normalized[class_name] = per_class
+    normalized[duplicate_name] = duplicates
+    normalized[subset_name] = subsets
+    return normalized
+
+
 def load_derived_artifacts(output_dir, run_label):
     names = [
         f"nms_threshold_summary_{run_label}.csv",
@@ -896,7 +1703,8 @@ def load_derived_artifacts(output_dir, run_label):
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError("Missing derived NMS artifacts: " + "; ".join(missing))
-    return {path.name: pd.read_csv(path) for path in paths}
+    artifacts = {path.name: pd.read_csv(path) for path in paths}
+    return validate_derived_artifacts(artifacts, run_label)
 
 
 def build_figures(summary, duplicates, subset_summary, figure_dir):
@@ -980,16 +1788,35 @@ def build_figures(summary, duplicates, subset_summary, figure_dir):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Evaluate cached Model 2 detections across NMS IoU thresholds."
+        description=(
+            "Evaluate the verified selected checkpoint across NMS IoU thresholds."
+        )
     )
     parser.add_argument("--sample-index", type=Path, default=DEFAULT_SAMPLE_INDEX)
     parser.add_argument("--overlap-profile", type=Path, default=DEFAULT_OVERLAP_PROFILE)
-    parser.add_argument("--class-file", type=Path, default=DEFAULT_CLASS_FILE)
+    parser.add_argument("--selection-run", type=Path, default=DEFAULT_SELECTION_RUN)
+    parser.add_argument("--class-file", type=Path)
     parser.add_argument("--asset-root", type=Path)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--figure-dir", type=Path, default=DEFAULT_FIGURE_DIR)
     parser.add_argument("--ground-truth-cache", type=Path)
     parser.add_argument("--raw-predictions-cache", type=Path)
+    parser.add_argument(
+        "--inference-ledger",
+        type=Path,
+        help=(
+            "One-row-per-image ledger paired with --raw-predictions-cache. "
+            "Managed runs create it automatically."
+        ),
+    )
+    parser.add_argument(
+        "--inference-cache-manifest",
+        type=Path,
+        help=(
+            "Content-addressed manifest covering the ground-truth, raw-prediction, "
+            "and inference-ledger cache package."
+        ),
+    )
     parser.add_argument("--max-images", type=positive_int)
     parser.add_argument("--refresh-postprocessing", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -1005,10 +1832,29 @@ def _run_label(max_images):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     run_label = _run_label(args.max_images)
-    if args.force and (args.ground_truth_cache or args.raw_predictions_cache):
+    cache_overrides = {
+        "ground truth": args.ground_truth_cache,
+        "raw predictions": args.raw_predictions_cache,
+        "inference ledger": args.inference_ledger,
+    }
+    supplied_cache_overrides = {
+        label for label, value in cache_overrides.items() if value is not None
+    }
+    if args.force and (
+        supplied_cache_overrides or args.inference_cache_manifest is not None
+    ):
         raise ValueError(
             "--force cannot be combined with external cache paths; "
             "use the output directory for rebuilt caches."
+        )
+    if (supplied_cache_overrides or args.inference_cache_manifest is not None) and (
+        len(supplied_cache_overrides) != len(cache_overrides)
+        or args.inference_cache_manifest is None
+    ):
+        raise ValueError(
+            "External cache replay requires --ground-truth-cache, "
+            "--raw-predictions-cache, --inference-ledger, and "
+            "--inference-cache-manifest together."
         )
     if args.figures_only:
         artifacts = load_derived_artifacts(args.output_dir, run_label)
@@ -1023,6 +1869,8 @@ def main(argv=None):
         return artifacts, {}, figure_paths
 
     index = load_sample_index(args.sample_index, args.max_images)
+    selection = load_verified_checkpoint_selection(args.selection_run)
+    model_name = selection["selected_model"]
     output_dir = Path(args.output_dir).expanduser().absolute()
     ground_truth_path = (
         Path(args.ground_truth_cache).expanduser().absolute()
@@ -1032,40 +1880,199 @@ def main(argv=None):
     raw_path = (
         Path(args.raw_predictions_cache).expanduser().absolute()
         if args.raw_predictions_cache
-        else output_dir / f"{MODEL_NAME}_raw_predictions_{run_label}.csv"
+        else output_dir / f"{model_name}_raw_predictions_{run_label}.csv"
     )
-    classes = load_classes(args.class_file, (ground_truth_path, raw_path))
+    ledger_path = (
+        Path(args.inference_ledger).expanduser().absolute()
+        if args.inference_ledger
+        else output_dir / f"{model_name}_inference_ledger_{run_label}.csv"
+    )
+    cache_manifest_path = (
+        Path(args.inference_cache_manifest).expanduser().absolute()
+        if args.inference_cache_manifest
+        else output_dir / f"inference_cache_manifest_{run_label}.json"
+    )
+    cache_paths = {
+        "ground_truth": ground_truth_path,
+        "raw_predictions": raw_path,
+        "inference_ledger": ledger_path,
+    }
+    package_paths = [*cache_paths.values(), cache_manifest_path]
+    package_exists = [path.is_file() for path in package_paths]
+    if supplied_cache_overrides and not all(package_exists):
+        missing = [
+            str(path)
+            for path, exists in zip(package_paths, package_exists)
+            if not exists
+        ]
+        raise FileNotFoundError(
+            "Every externally supplied cache package file must already exist: "
+            + ", ".join(missing)
+        )
+    if args.force:
+        generate_cache = True
+    elif all(package_exists):
+        generate_cache = False
+    elif not any(package_exists):
+        generate_cache = True
+    else:
+        missing = [
+            path.name
+            for path, exists in zip(package_paths, package_exists)
+            if not exists
+        ]
+        raise FileNotFoundError(
+            "Inference-cache package is incomplete and cannot be trusted. "
+            f"Missing {missing}; regenerate the managed package with --force."
+        )
+
+    default_asset_root = (
+        Path(args.asset_root).expanduser().absolute()
+        if args.asset_root is not None
+        else PROJECT_ROOT / "detector_service" / "storage"
+    )
+    selected_assets = (
+        resolve_selected_model_assets(default_asset_root, args.selection_run)
+        if generate_cache
+        else None
+    )
+    class_file = args.class_file or (
+        selected_assets["resolved_paths"]["classes"]
+        if selected_assets is not None
+        else default_asset_root / selection["asset_paths"]["classes"]
+    )
+    classes = load_classes(
+        class_file,
+        expected_sha256=selection["model_identity"]["names"],
+    )
     _, crowded_index = load_overlap_profile(args.overlap_profile, index)
 
-    if args.ground_truth_cache and not ground_truth_path.is_file():
-        raise FileNotFoundError(f"Ground-truth cache not found: {ground_truth_path}")
-    if args.force or not ground_truth_path.is_file():
+    if generate_cache:
         ground_truth = build_ground_truth(index, classes, asset_root=args.asset_root)
+        ledger_rows = []
+        raw_predictions = run_raw_inference(
+            index,
+            classes,
+            asset_root=args.asset_root,
+            model_name=model_name,
+            model_assets=(
+                selected_assets["resolved_paths"]
+                if selected_assets is not None
+                else None
+            ),
+            selection_run=args.selection_run,
+            expected_names_sha256=selection["model_identity"]["names"],
+            ledger_rows=ledger_rows,
+        )
+        ledger = pd.DataFrame(ledger_rows, columns=LEDGER_COLUMNS)
+        ground_truth = validate_ground_truth(ground_truth, index, classes)
+        raw_predictions = validate_raw_predictions(
+            raw_predictions,
+            index,
+            classes,
+            model_name=model_name,
+        )
+        ledger = validate_inference_ledger(
+            ledger,
+            index,
+            raw_predictions,
+            model_name=model_name,
+        )
         _write_dataframe_atomic(ground_truth_path, ground_truth)
+        _write_dataframe_atomic(raw_path, raw_predictions)
+        _write_dataframe_atomic(ledger_path, ledger)
+        ground_truth = validate_ground_truth(
+            pd.read_csv(ground_truth_path),
+            index,
+            classes,
+        )
+        raw_predictions = validate_raw_predictions(
+            pd.read_csv(raw_path),
+            index,
+            classes,
+            model_name=model_name,
+        )
+        ledger = validate_inference_ledger(
+            pd.read_csv(ledger_path),
+            index,
+            raw_predictions,
+            model_name=model_name,
+        )
+        artifact_tables = {
+            "ground_truth": ground_truth,
+            "raw_predictions": raw_predictions,
+            "inference_ledger": ledger,
+        }
+        cache_manifest = build_inference_cache_manifest(
+            sample_index_path=args.sample_index,
+            index=index,
+            selection=selection,
+            classes=classes,
+            class_file=class_file,
+            model_name=model_name,
+            run_label=run_label,
+            artifact_paths=cache_paths,
+            artifact_tables=artifact_tables,
+        )
+        _write_json_atomic(cache_manifest_path, cache_manifest)
+        validate_inference_cache_manifest(
+            cache_manifest_path,
+            sample_index_path=args.sample_index,
+            index=index,
+            selection=selection,
+            classes=classes,
+            class_file=class_file,
+            model_name=model_name,
+            run_label=run_label,
+            artifact_paths=cache_paths,
+            artifact_tables=artifact_tables,
+        )
         print(f"[WRITE] {ground_truth_path} rows={len(ground_truth)}")
+        print(f"[WRITE] {raw_path} rows={len(raw_predictions)}")
+        print(f"[WRITE] {ledger_path} rows={len(ledger)}")
+        print(f"[WRITE] {cache_manifest_path}")
     else:
         ground_truth = pd.read_csv(ground_truth_path)
-        ground_truth = ground_truth[
-            ground_truth["image_file"].isin(set(index["image_file"]))
-        ].copy()
-    ground_truth = validate_ground_truth(ground_truth, index, classes)
-
-    if args.raw_predictions_cache and not raw_path.is_file():
-        raise FileNotFoundError(f"Raw-prediction cache not found: {raw_path}")
-    if args.force or not raw_path.is_file():
-        raw_predictions = run_raw_inference(index, classes, asset_root=args.asset_root)
-        _write_dataframe_atomic(raw_path, raw_predictions)
-        print(f"[WRITE] {raw_path} rows={len(raw_predictions)}")
-    else:
         raw_predictions = pd.read_csv(raw_path)
-        raw_predictions = raw_predictions[
-            raw_predictions["image_file"].isin(set(index["image_file"]))
-        ].copy()
-    raw_predictions = validate_raw_predictions(raw_predictions, index, classes)
+        ledger = pd.read_csv(ledger_path)
+        artifact_tables = {
+            "ground_truth": ground_truth,
+            "raw_predictions": raw_predictions,
+            "inference_ledger": ledger,
+        }
+        validate_inference_cache_manifest(
+            cache_manifest_path,
+            sample_index_path=args.sample_index,
+            index=index,
+            selection=selection,
+            classes=classes,
+            class_file=class_file,
+            model_name=model_name,
+            run_label=run_label,
+            artifact_paths=cache_paths,
+            artifact_tables=artifact_tables,
+        )
+        ground_truth = validate_ground_truth(ground_truth, index, classes)
+        raw_predictions = validate_raw_predictions(
+            raw_predictions,
+            index,
+            classes,
+            model_name=model_name,
+        )
+        ledger = validate_inference_ledger(
+            ledger,
+            index,
+            raw_predictions,
+            model_name=model_name,
+        )
 
     print(f"[INFO] Images selected: {len(index)}")
     print(f"[INFO] Crowded subset images: {len(crowded_index)}")
     print(f"[INFO] Classes: {len(classes)}")
+    print(
+        f"[INFO] Selected checkpoint: {selection['selected_checkpoint']} "
+        f"({model_name}) from {selection['selection_run_id']}"
+    )
     print(f"[INFO] Raw candidates reused: {len(raw_predictions)}")
     print(f"[INFO] NMS thresholds: {list(NMS_THRESHOLDS)}")
 
@@ -1077,9 +2084,22 @@ def main(argv=None):
         crowded_index,
         output_dir,
         run_label,
-        refresh_postprocessing=args.refresh_postprocessing or args.force,
+        refresh_postprocessing=(
+            args.refresh_postprocessing or args.force or generate_cache
+        ),
+        model_name=model_name,
     )
+    artifacts = validate_derived_artifacts(artifacts, run_label)
     output_paths = write_sweep_artifacts(output_dir, artifacts)
+    output_paths[cache_manifest_path.name] = cache_manifest_path
+    operating_point_path = write_operating_point(
+        output_dir,
+        artifacts,
+        output_paths,
+        selection,
+        run_label,
+    )
+    output_paths[operating_point_path.name] = operating_point_path
     figure_paths = []
     if not args.skip_figures:
         figure_paths = build_figures(

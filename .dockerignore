@@ -1,6 +1,7 @@
 .git/
 .venv/
 .env
+.env.*
 .DS_Store
 **/__pycache__/
 **/*.pyc
@@ -10,3 +11,21 @@ experiments/
 tests/
 scratch/
 notebook_text_exports/
+
+# Model binaries are supplied at runtime, never embedded in the build context.
+**/*.weights
+**/*.onnx
+**/*.pt
+**/*.pth
+**/*.engine
+**/*.tflite
+
+# Evaluation and stream inputs are supplied at runtime as well.
+**/*.mp4
+**/*.avi
+**/*.mov
+**/*.mkv
+**/*.webm
+**/*.mpeg
+**/*.mpg
+**/*.m4v

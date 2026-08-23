@@ -1,7 +1,3 @@
 -r detector_service/requirements.txt
-pandas
-matplotlib
-seaborn
-scikit-learn
-scipy
-pyarrow
+pandas==3.0.5
+matplotlib==3.11.1

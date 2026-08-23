@@ -23,23 +23,27 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: |
             detector_service/requirements.txt
             requirements-analysis.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --requirement requirements-analysis.txt
+          python -m pip install --requirement requirements-dev.txt
+
+      - name: Lint Python sources
+        run: python -m ruff check .
 
       - name: Run test suite
         run: python -m unittest discover -s tests -v
@@ -51,7 +55,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -61,3 +65,10 @@ jobs:
             --file detector_service/Dockerfile \
             --tag warehouse-object-detection:ci \
             .
+
+      - name: Smoke-test inference image
+        run: |
+          docker run --rm warehouse-object-detection:ci \
+            python -m detector_service.app --help
+          docker run --rm warehouse-object-detection:ci \
+            python -c "import os; from pathlib import Path; import cv2, numpy; assert os.getuid() != 0; assert cv2.__version__ == '4.13.0'; assert numpy.__version__ == '2.5.2'; probe = Path('/app/detector_service/storage/detections/.write-check'); probe.write_text('ok', encoding='utf-8'); probe.unlink(); print(f'uid={os.getuid()} OpenCV={cv2.__version__} NumPy={numpy.__version__}')"

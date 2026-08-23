@@ -19,8 +19,15 @@ RUN python -m pip install \
         --requirement /tmp/runtime-requirements.txt \
     && python -c "import cv2; assert cv2.__version__.startswith('4.13.'), cv2.__version__"
 
-COPY detector_service/ /app/detector_service/
+RUN groupadd --system app \
+    && useradd --system --gid app --create-home --home-dir /home/app app
+
+COPY --chown=app:app detector_service/ /app/detector_service/
+
+RUN install -d -o app -g app /app/detector_service/storage/detections
 
 EXPOSE 23000/udp
+
+USER app
 
 CMD ["python", "-m", "detector_service.app"]

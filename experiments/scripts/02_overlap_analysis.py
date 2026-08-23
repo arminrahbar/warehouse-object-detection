@@ -4,7 +4,7 @@ import argparse
 import math
 import sys
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,13 +15,22 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from detector_service.modules.utils.metrics import calculate_iou
+from experiments.scripts.experiment_contracts import resolve_indexed_path
 
 
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "experiments" / "outputs"
-DEFAULT_SAMPLING_DIR = DEFAULT_OUTPUT_ROOT / "dataset_sampling"
-DEFAULT_DATASET_INDEX = DEFAULT_OUTPUT_ROOT / "dataset_index.csv"
+DEFAULT_INVENTORY_DIR = (
+    PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
+)
+DEFAULT_ANALYSIS_ROOT = (
+    PROJECT_ROOT / "experiments" / "outputs" / "02_dataset_analysis"
+)
+DEFAULT_SAMPLING_DIR = DEFAULT_ANALYSIS_ROOT / "02_sample_selection"
+DEFAULT_OVERLAP_DIR = DEFAULT_ANALYSIS_ROOT / "03_overlap_analysis"
+DEFAULT_DATASET_INDEX = DEFAULT_INVENTORY_DIR / "dataset_index.csv"
 DEFAULT_SELECTED_INDEX = DEFAULT_SAMPLING_DIR / "selected_sample_index.csv"
-DEFAULT_FIGURE_DIR = PROJECT_ROOT / "experiments" / "figures" / "02_dataset_sampling"
+DEFAULT_FIGURE_DIR = (
+    PROJECT_ROOT / "scratch" / "diagnostic-figures" / "02_dataset_analysis"
+)
 
 IOU_THRESHOLDS = (0.1, 0.3, 0.5)
 CROWDING_BUCKET_ORDER = ("0", "1-4", "5-19", "20+")
@@ -214,7 +223,7 @@ def load_and_validate_indexes(dataset_index_path, selected_index_path):
     if not full_path.is_file():
         raise FileNotFoundError(
             f"Dataset index not found: {full_path}. "
-            "Run experiments/scripts/02_build_dataset_index.py first."
+            "Run experiments/scripts/00_build_dataset_inventory.py first."
         )
     if not selected_path.is_file():
         raise FileNotFoundError(
@@ -262,26 +271,13 @@ def load_and_validate_indexes(dataset_index_path, selected_index_path):
 
 
 def resolve_label_path(indexed_path, asset_root=None, project_root=PROJECT_ROOT):
-    """Resolve a serialized label path without changing its stored namespace."""
+    """Resolve a serialized label path and enforce root containment."""
 
-    raw_value = str(indexed_path).strip()
-    if not raw_value:
-        raise ValueError("Label path cannot be empty.")
-    direct = Path(raw_value).expanduser()
-    if direct.is_absolute():
-        return direct
-
-    logical = PurePosixPath(raw_value.replace("\\", "/"))
-    parts = logical.parts
-    if asset_root is not None:
-        root = Path(asset_root).expanduser().absolute()
-        supported_prefixes = {
-            ("detector_service", "storage"),
-            ("techtrack", "storage"),
-        }
-        if len(parts) >= 2 and tuple(parts[:2]) in supported_prefixes:
-            return root.joinpath(*parts[2:])
-    return Path(project_root).joinpath(*parts)
+    return resolve_indexed_path(
+        indexed_path,
+        asset_root=asset_root,
+        project_root=project_root,
+    )
 
 
 def build_overlap_profile(index, asset_root=None, progress_interval=1000):
@@ -473,7 +469,7 @@ def build_parser():
     parser.add_argument("--dataset-index", type=Path, default=DEFAULT_DATASET_INDEX)
     parser.add_argument("--selected-index", type=Path, default=DEFAULT_SELECTED_INDEX)
     parser.add_argument("--asset-root", type=Path)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_SAMPLING_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OVERLAP_DIR)
     parser.add_argument("--figure-dir", type=Path, default=DEFAULT_FIGURE_DIR)
     parser.add_argument("--selected-name")
     parser.add_argument("--progress-interval", type=positive_int, default=1000)

@@ -21,12 +21,14 @@ from detector_service.modules.rectification.hard_negative_mining import (
 )
 
 
-DEFAULT_OUTPUT_DIR = (
-    PROJECT_ROOT / "experiments" / "outputs" / "hard_negative_mining"
+DEFAULT_EXPERIMENT_DIR = (
+    PROJECT_ROOT / "experiments" / "outputs" / "05_hard_negative_mining"
 )
-DEFAULT_COMPONENT_PATH = DEFAULT_OUTPUT_DIR / "image_error_components_sample5000.csv"
+DEFAULT_COMPONENT_DIR = DEFAULT_EXPERIMENT_DIR / "01_error_components"
+DEFAULT_OUTPUT_DIR = DEFAULT_EXPERIMENT_DIR / "02_review_queues"
+DEFAULT_COMPONENT_PATH = DEFAULT_COMPONENT_DIR / "image_error_components_sample5000.csv"
 DEFAULT_FIGURE_DIR = (
-    PROJECT_ROOT / "experiments" / "figures" / "05_hard_negative_mining"
+    PROJECT_ROOT / "scratch" / "diagnostic-figures" / "05_hard_negative_mining"
 )
 DEFAULT_TOP_N = 250
 DENSITY_BUCKETS = ("1", "2-4", "5-9", "10-14", "15-19", "20+")

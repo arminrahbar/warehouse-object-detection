@@ -11,11 +11,18 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SOURCE_DIR = PROJECT_ROOT / "experiments" / "outputs"
-DEFAULT_OUTPUT_DIR = DEFAULT_SOURCE_DIR / "dataset_sampling"
-DEFAULT_FIGURE_DIR = PROJECT_ROOT / "experiments" / "figures" / "02_dataset_sampling"
-DEFAULT_DATASET_INDEX = DEFAULT_SOURCE_DIR / "dataset_index.csv"
-DEFAULT_CLASS_DISTRIBUTION = DEFAULT_SOURCE_DIR / "class_distribution.csv"
+DEFAULT_INVENTORY_DIR = (
+    PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
+)
+DEFAULT_ANALYSIS_ROOT = (
+    PROJECT_ROOT / "experiments" / "outputs" / "02_dataset_analysis"
+)
+DEFAULT_OUTPUT_DIR = DEFAULT_ANALYSIS_ROOT / "02_sample_selection"
+DEFAULT_FIGURE_DIR = (
+    PROJECT_ROOT / "scratch" / "diagnostic-figures" / "02_dataset_analysis"
+)
+DEFAULT_DATASET_INDEX = DEFAULT_INVENTORY_DIR / "dataset_index.csv"
+DEFAULT_CLASS_DISTRIBUTION = DEFAULT_INVENTORY_DIR / "class_distribution.csv"
 
 SAMPLE_SIZE = 5000
 RANDOM_SEED = 42
@@ -77,12 +84,12 @@ def load_and_validate_inputs(dataset_index_path, class_distribution_path, sample
     if not index_path.is_file():
         raise FileNotFoundError(
             f"Dataset index not found: {index_path}. "
-            "Run experiments/scripts/02_build_dataset_index.py first."
+            "Run experiments/scripts/00_build_dataset_inventory.py first."
         )
     if not class_path.is_file():
         raise FileNotFoundError(
             f"Class distribution not found: {class_path}. "
-            "Run experiments/scripts/02_build_dataset_index.py first."
+            "Run experiments/scripts/00_build_dataset_inventory.py first."
         )
 
     index = pd.read_csv(index_path)

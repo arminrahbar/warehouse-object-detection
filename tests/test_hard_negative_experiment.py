@@ -59,7 +59,11 @@ class HardNegativeFixture(unittest.TestCase):
                 self.prediction_row("d", 0, [2, 0, 10, 10], 0.55),
                 self.prediction_row("e", 1, [0, 0, 10, 10], 0.85),
             ],
-            columns=components_script.PREDICTION_COLUMNS,
+            columns=[
+                *components_script.PREDICTION_INPUT_COLUMNS,
+                "dataset",
+                "augmentation_condition",
+            ],
         )
         self.ground_truth = pd.DataFrame(
             [
@@ -86,6 +90,10 @@ class HardNegativeFixture(unittest.TestCase):
 
     def prediction_row(self, name, class_id, box, confidence):
         return {
+            "model": "model2",
+            "nms_threshold": 0.3,
+            "dataset": components_script.DATASET_NAME,
+            "augmentation_condition": components_script.ORIGINAL_CONDITION,
             "image_file": f"{name}.jpg",
             "bbox_x": box[0],
             "bbox_y": box[1],
@@ -119,8 +127,129 @@ class HardNegativeFixture(unittest.TestCase):
         self.build_components().to_csv(path, index=False)
         return path
 
+    def load_predictions(self, path=None, model="model2", threshold=0.3):
+        return components_script.load_predictions(
+            path or self.prediction_path,
+            self.sample,
+            expected_model=model,
+            expected_nms_threshold=threshold,
+        )
+
+    def resolved_prediction_input(self):
+        return {
+            "prediction_path": self.prediction_path,
+            "selected_model": "model2",
+            "nms_threshold": 0.3,
+        }
+
 
 class ComponentContractTests(HardNegativeFixture):
+    def test_module_import_does_not_require_ignored_experiment_evidence(self):
+        with patch(
+            "experiments.scripts.experiment_contracts."
+            "load_verified_checkpoint_selection",
+            side_effect=AssertionError("selection evidence read during import"),
+        ), patch(
+            "experiments.scripts.experiment_contracts.load_verified_operating_point",
+            side_effect=AssertionError("operating-point evidence read during import"),
+        ):
+            loaded = load_module(
+                SCRIPT_DIR / "05_build_hnm_components.py",
+                "hnm_components_clean_checkout_test",
+            )
+
+        self.assertEqual(
+            loaded.DEFAULT_PREDICTION_PATH,
+            loaded.DEFAULT_NMS_OUTPUT_DIR
+            / "model2_predictions_nms_0_3_sample5000.csv",
+        )
+
+    def test_component_defaults_follow_numbered_experiment_layout(self):
+        output_root = PROJECT_ROOT / "experiments" / "outputs"
+        self.assertEqual(
+            components_script.DEFAULT_SAMPLE_PATH,
+            output_root
+            / "02_dataset_analysis"
+            / "02_sample_selection"
+            / "selected_sample_index.csv",
+        )
+        self.assertEqual(
+            components_script.DEFAULT_PREDICTION_PATH,
+            output_root
+            / "03_nms_thresholding"
+            / "01_threshold_sweep"
+            / "model2_predictions_nms_0_3_sample5000.csv",
+        )
+        self.assertEqual(
+            components_script.DEFAULT_SELECTION_RUN,
+            output_root
+            / "01_model_selection"
+            / "03_checkpoint_decision"
+            / "selection-20260821-v1",
+        )
+        self.assertEqual(
+            components_script.DEFAULT_OPERATING_POINT,
+            output_root
+            / "03_nms_thresholding"
+            / "01_threshold_sweep"
+            / "operating_point.json",
+        )
+        self.assertEqual(
+            components_script.DEFAULT_GROUND_TRUTH_PATH,
+            output_root
+            / "03_nms_thresholding"
+            / "01_threshold_sweep"
+            / "ground_truth_sample5000.csv",
+        )
+        self.assertEqual(
+            components_script.DEFAULT_OUTPUT_DIR,
+            output_root
+            / "05_hard_negative_mining"
+            / "01_error_components",
+        )
+        arguments = components_script.build_parser().parse_args([])
+        self.assertEqual(arguments.selection_run, components_script.DEFAULT_SELECTION_RUN)
+        self.assertEqual(
+            arguments.operating_point,
+            components_script.DEFAULT_OPERATING_POINT,
+        )
+        self.assertIsNone(arguments.predictions)
+
+    def test_default_prediction_path_comes_from_verified_decisions(self):
+        selection_run = self.root / "selection"
+        operating_path = self.root / "thresholds" / "operating_point.json"
+        with patch.object(
+            components_script,
+            "load_verified_checkpoint_selection",
+            return_value={"selected_model": "model1"},
+        ), patch.object(
+            components_script,
+            "load_verified_operating_point",
+            return_value={
+                "path": operating_path,
+                "selected_nms_iou_threshold": 0.55,
+            },
+        ):
+            resolved = components_script.resolve_prediction_input(
+                None,
+                selection_run,
+                operating_path,
+            )
+            explicit = components_script.resolve_prediction_input(
+                self.prediction_path,
+                selection_run,
+                operating_path,
+            )
+
+        self.assertEqual(resolved["selected_model"], "model1")
+        self.assertEqual(resolved["nms_threshold"], 0.55)
+        self.assertEqual(
+            resolved["prediction_path"],
+            operating_path.parent
+            / "model1_predictions_nms_0_55_sample5000.csv",
+        )
+        self.assertEqual(explicit["prediction_path"], self.prediction_path)
+
     def test_operating_thresholds_and_schema_are_explicit(self):
         self.assertEqual(components_script.MATCH_IOU_THRESHOLD, 0.5)
         self.assertEqual(components_script.CONFIDENCE_FLOOR, 0.5)
@@ -135,6 +264,10 @@ class ComponentContractTests(HardNegativeFixture):
         self.assertEqual(
             len(components_script.COMPONENT_COLUMNS),
             len(set(components_script.COMPONENT_COLUMNS)),
+        )
+        self.assertEqual(
+            components_script.PREDICTION_PROVENANCE_COLUMNS,
+            ["model", "nms_threshold"],
         )
 
     def test_sample_loader_validates_uniqueness_counts_and_buckets(self):
@@ -158,20 +291,57 @@ class ComponentContractTests(HardNegativeFixture):
         outside = self.prediction_row("outside", 0, [0, 0, 1, 1], 0.9)
         table = pd.concat([self.predictions, pd.DataFrame([outside])], ignore_index=True)
         table.to_csv(self.prediction_path, index=False)
-        loaded = components_script.load_predictions(self.prediction_path, self.sample)
+        loaded = self.load_predictions()
         self.assertNotIn("outside.jpg", set(loaded["image_file"]))
+        self.assertEqual(loaded.columns.tolist(), components_script.PREDICTION_COLUMNS)
         invalid = self.predictions.copy()
         invalid.loc[0, "combined_confidence"] = 0.49
         invalid.to_csv(self.prediction_path, index=False)
         with self.assertRaisesRegex(ValueError, "confidence floor"):
-            components_script.load_predictions(self.prediction_path, self.sample)
+            self.load_predictions()
+
+    def test_prediction_loader_rejects_missing_or_mismatched_provenance(self):
+        missing = self.predictions.drop(columns="model")
+        missing.to_csv(self.prediction_path, index=False)
+        with self.assertRaisesRegex(ValueError, "missing columns: model"):
+            self.load_predictions()
+
+        wrong_model = self.predictions.copy()
+        wrong_model["model"] = "model1"
+        wrong_model.to_csv(self.prediction_path, index=False)
+        with self.assertRaisesRegex(ValueError, "model provenance"):
+            self.load_predictions()
+
+        wrong_threshold = self.predictions.copy()
+        wrong_threshold["nms_threshold"] = 0.2
+        wrong_threshold.to_csv(self.prediction_path, index=False)
+        with self.assertRaisesRegex(ValueError, "nms_threshold provenance"):
+            self.load_predictions()
+
+    def test_optional_dataset_and_condition_provenance_must_match(self):
+        wrong_dataset = self.predictions.copy()
+        wrong_dataset["dataset"] = "different_population"
+        wrong_dataset.to_csv(self.prediction_path, index=False)
+        with self.assertRaisesRegex(ValueError, "dataset provenance"):
+            self.load_predictions()
+
+        wrong_condition = self.predictions.copy()
+        wrong_condition["augmentation_condition"] = "gaussian_blur_k9"
+        wrong_condition.to_csv(self.prediction_path, index=False)
+        with self.assertRaisesRegex(ValueError, "augmentation_condition provenance"):
+            self.load_predictions()
+
+        ground_truth = self.ground_truth.assign(dataset="different_population")
+        ground_truth.to_csv(self.ground_truth_path, index=False)
+        with self.assertRaisesRegex(ValueError, "dataset provenance"):
+            components_script.load_ground_truth(self.ground_truth_path, self.sample)
 
     def test_prediction_and_truth_geometry_must_be_finite_and_nonnegative(self):
         invalid_predictions = self.predictions.copy()
         invalid_predictions.loc[0, "bbox_w"] = -1
         invalid_predictions.to_csv(self.prediction_path, index=False)
         with self.assertRaisesRegex(ValueError, "cannot be negative"):
-            components_script.load_predictions(self.prediction_path, self.sample)
+            self.load_predictions()
         invalid_truth = self.ground_truth.copy()
         invalid_truth["bbox_h"] = invalid_truth["bbox_h"].astype(float)
         invalid_truth.loc[0, "bbox_h"] = np.inf
@@ -219,42 +389,77 @@ class ComponentConstructionTests(HardNegativeFixture):
             components_script.validate_component_table(invalid)
 
     def test_component_main_writes_bounded_artifact(self):
-        result, output = components_script.main(
-            [
-                "--sample-index",
-                str(self.sample_path),
-                "--predictions",
-                str(self.prediction_path),
-                "--ground-truth",
-                str(self.ground_truth_path),
-                "--output-dir",
-                str(self.output_dir),
-            ]
-        )
+        with patch.object(
+            components_script,
+            "resolve_prediction_input",
+            return_value=self.resolved_prediction_input(),
+        ):
+            result, output = components_script.main(
+                [
+                    "--sample-index",
+                    str(self.sample_path),
+                    "--predictions",
+                    str(self.prediction_path),
+                    "--ground-truth",
+                    str(self.ground_truth_path),
+                    "--output-dir",
+                    str(self.output_dir),
+                ]
+            )
         self.assertEqual(output.name, "image_error_components_sample5000.csv")
         self.assertTrue(output.is_file())
         assert_frame_equal(pd.read_csv(output), result, check_dtype=False)
 
     def test_bounded_main_uses_prefix_and_run_specific_name(self):
-        result, output = components_script.main(
-            [
-                "--sample-index",
-                str(self.sample_path),
-                "--predictions",
-                str(self.prediction_path),
-                "--ground-truth",
-                str(self.ground_truth_path),
-                "--output-dir",
-                str(self.output_dir),
-                "--max-images",
-                "2",
-            ]
-        )
+        with patch.object(
+            components_script,
+            "resolve_prediction_input",
+            return_value=self.resolved_prediction_input(),
+        ):
+            result, output = components_script.main(
+                [
+                    "--sample-index",
+                    str(self.sample_path),
+                    "--predictions",
+                    str(self.prediction_path),
+                    "--ground-truth",
+                    str(self.ground_truth_path),
+                    "--output-dir",
+                    str(self.output_dir),
+                    "--max-images",
+                    "2",
+                ]
+            )
         self.assertEqual(len(result), 2)
         self.assertEqual(output.name, "image_error_components_first_2.csv")
 
 
 class QueueContractTests(HardNegativeFixture):
+    def test_queue_defaults_separate_components_from_review_tables(self):
+        experiment_dir = (
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "05_hard_negative_mining"
+        )
+        self.assertEqual(
+            queues_script.DEFAULT_COMPONENT_PATH,
+            experiment_dir
+            / "01_error_components"
+            / "image_error_components_sample5000.csv",
+        )
+        self.assertEqual(
+            queues_script.DEFAULT_OUTPUT_DIR,
+            experiment_dir / "02_review_queues",
+        )
+        self.assertEqual(
+            queues_script.DEFAULT_FIGURE_DIR,
+            PROJECT_ROOT
+            / "scratch"
+            / "diagnostic-figures"
+            / "05_hard_negative_mining",
+        )
+
     def test_five_profiles_have_distinct_eligibility_and_weight_contracts(self):
         self.assertEqual(
             [profile["profile_name"] for profile in queues_script.PROFILES],

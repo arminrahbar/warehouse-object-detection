@@ -11,11 +11,18 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SOURCE_DIR = PROJECT_ROOT / "experiments" / "outputs"
-DEFAULT_OUTPUT_DIR = DEFAULT_SOURCE_DIR / "dataset_sampling"
-DEFAULT_DATASET_INDEX = DEFAULT_SOURCE_DIR / "dataset_index.csv"
-DEFAULT_CLASS_DISTRIBUTION = DEFAULT_SOURCE_DIR / "class_distribution.csv"
-DEFAULT_OBJECT_DISTRIBUTION = DEFAULT_SOURCE_DIR / "object_count_distribution.csv"
+DEFAULT_INVENTORY_DIR = (
+    PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
+)
+DEFAULT_ANALYSIS_ROOT = (
+    PROJECT_ROOT / "experiments" / "outputs" / "02_dataset_analysis"
+)
+DEFAULT_OUTPUT_DIR = DEFAULT_ANALYSIS_ROOT / "01_dataset_summary"
+DEFAULT_DATASET_INDEX = DEFAULT_INVENTORY_DIR / "dataset_index.csv"
+DEFAULT_CLASS_DISTRIBUTION = DEFAULT_INVENTORY_DIR / "class_distribution.csv"
+DEFAULT_OBJECT_DISTRIBUTION = (
+    DEFAULT_INVENTORY_DIR / "object_count_distribution.csv"
+)
 
 DENSITY_BUCKET_ORDER = ["1", "2-4", "5-9", "10-14", "15-19", "20+"]
 DENSE_THRESHOLDS = [5, 10, 15, 20]
@@ -68,7 +75,7 @@ def _read_csv(path, label):
     if not source_path.is_file():
         raise FileNotFoundError(
             f"{label} not found: {source_path}. "
-            "Run experiments/scripts/02_build_dataset_index.py first."
+            "Run experiments/scripts/00_build_dataset_inventory.py first."
         )
     with source_path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source)

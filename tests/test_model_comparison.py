@@ -1,614 +1,678 @@
+import argparse
+import hashlib
 import importlib.util
 import json
 import os
-import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
 
 
-try:
-    import cv2
-except ModuleNotFoundError:
-    cv2 = types.ModuleType("cv2")
-    sys.modules["cv2"] = cv2
-
-cv2.dnn = getattr(cv2, "dnn", types.SimpleNamespace())
-cv2.imread = getattr(cv2, "imread", Mock(name="imread"))
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SCRIPT = PROJECT_ROOT / "experiments" / "scripts" / "01_model_comparison.py"
-SCRIPT_PATH = Path(os.environ.get("MODEL_COMPARISON_SCRIPT", DEFAULT_SCRIPT))
-
+SCRIPT_PATH = Path(
+    os.environ.get(
+        "MODEL_COMPARISON_SCRIPT",
+        PROJECT_ROOT / "experiments" / "scripts" / "01_model_comparison.py",
+    )
+)
 spec = importlib.util.spec_from_file_location("model_comparison_under_test", SCRIPT_PATH)
-model_comparison = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(model_comparison)
+comparison = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(comparison)
 
 
-class ModelComparisonContractTests(unittest.TestCase):
-    def test_fixed_operating_policy_and_model_assets_are_explicit(self):
-        self.assertEqual(model_comparison.DETECTOR_OBJECTNESS_THRESHOLD, 0.5)
-        self.assertEqual(model_comparison.NMS_CONFIDENCE_THRESHOLD, 0.5)
-        self.assertEqual(model_comparison.NMS_THRESHOLD, 0.3)
-        self.assertEqual(model_comparison.MAP_IOU_THRESHOLD, 0.5)
-        self.assertEqual(model_comparison.EVAL_TYPE, "combined")
-        self.assertEqual(list(model_comparison.MODELS), ["model1", "model2"])
-        for paths in model_comparison.MODELS.values():
-            self.assertEqual(set(paths), {"weights", "cfg", "names"})
-            self.assertFalse(any(path.is_absolute() for path in paths.values()))
+class FakeDetector:
+    def __init__(self, weights, config, classes, score_threshold):
+        self.score_threshold = score_threshold
 
-    def test_evidence_table_schemas_are_stable(self):
+    def predict(self, frame):
+        return [frame]
+
+    def post_process(self, outputs):
+        return [[ [0, 0, 10, 10] ][0]], [0], [1.0], [[1.0, 0.0]]
+
+
+class EmptyDetector(FakeDetector):
+    def post_process(self, outputs):
+        return [], [], [], []
+
+
+class WrongVectorDetector(FakeDetector):
+    def post_process(self, outputs):
+        return [[0, 0, 10, 10]], [0], [1.0], [[1.0]]
+
+
+class ContractTests(unittest.TestCase):
+    def test_default_paths_follow_the_canonical_stage_hierarchy(self):
         self.assertEqual(
-            model_comparison.PRED_COLUMNS,
-            model_comparison.RAW_COLUMNS + ["nms_threshold"],
+            comparison.DEFAULT_DATASET_INDEX,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "00_dataset_inventory"
+            / "dataset_index.csv",
         )
         self.assertEqual(
-            model_comparison.GT_COLUMNS,
-            [
-                "image_file",
-                "image_path",
-                "class_id",
-                "class_name",
-                "bbox_x",
-                "bbox_y",
-                "bbox_w",
-                "bbox_h",
-            ],
-        )
-        for column in (
-            "object_score",
-            "predicted_class_score",
-            "combined_confidence",
-            "class_scores_json",
-        ):
-            self.assertIn(column, model_comparison.RAW_COLUMNS)
-
-    def test_analysis_requirements_include_runtime_and_reporting_stack(self):
-        requirements = model_comparison.PROJECT_ROOT / "requirements-analysis.txt"
-        active_lines = [
-            line.strip()
-            for line in requirements.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
-
-        self.assertEqual(
-            active_lines,
-            [
-                "-r detector_service/requirements.txt",
-                "pandas",
-                "matplotlib",
-                "seaborn",
-                "scikit-learn",
-                "scipy",
-                "pyarrow",
-            ],
+            comparison.DEFAULT_OUTPUT_ROOT,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "01_model_selection"
+            / "01_quality_comparison",
         )
 
+    def test_policy_defaults_and_storage_relative_bundles_are_explicit(self):
+        self.assertEqual(comparison.DEFAULT_CANDIDATE_FLOOR, 0.001)
+        self.assertEqual(comparison.DEFAULT_DEPLOYMENT_CONFIDENCE, 0.50)
+        self.assertEqual(comparison.DEFAULT_NMS_IOU, 0.30)
+        self.assertEqual(comparison.PRIMARY_AP_POINTS, 101)
+        self.assertEqual(comparison.LEGACY_AP_POINTS, 11)
+        self.assertEqual(list(comparison.MODELS), ["model1", "model2"])
+        for bundle in comparison.MODELS.values():
+            self.assertEqual(set(bundle), {"weights", "cfg", "names"})
+            self.assertTrue(all(not path.is_absolute() for path in bundle.values()))
+            self.assertTrue(all(path.parts[:2] == ("detector_service", "storage") for path in bundle.values()))
 
-class ClassAndLabelLoadingTests(unittest.TestCase):
+    def test_output_schemas_include_low_floor_deployment_and_ledger_evidence(self):
+        self.assertIn("mAP50_101pt", comparison.AGGREGATE_COLUMNS)
+        self.assertIn("threshold_constrained_mAP50_11pt", comparison.AGGREGATE_COLUMNS)
+        self.assertIn("deployment_macro_f1", comparison.AGGREGATE_COLUMNS)
+        self.assertIn("combined_confidence", comparison.PREDICTION_COLUMNS)
+        self.assertIn("raw_candidate_count", comparison.LEDGER_COLUMNS)
+        self.assertIn("post_nms_prediction_count", comparison.LEDGER_COLUMNS)
+
+    def test_cli_requires_asset_root_and_run_id(self):
+        parser = comparison.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args([])
+        args = parser.parse_args(["--asset-root", "assets", "--run-id", "pilot-100"])
+        self.assertEqual(args.candidate_floor, 0.001)
+        self.assertEqual(args.deployment_confidence, 0.50)
+        self.assertEqual(args.nms_iou, 0.30)
+
+    def test_full_and_pilot_scopes_are_explicit(self):
+        parser = comparison.build_parser()
+        base = ["--asset-root", "assets", "--run-id", "comparison"]
+        with self.assertRaisesRegex(ValueError, "full mode requires"):
+            comparison.validate_run_scope(parser.parse_args(base))
+        with self.assertRaisesRegex(ValueError, "only with --pilot"):
+            comparison.validate_run_scope(
+                parser.parse_args(base + ["--max-images", "100"])
+            )
+        with self.assertRaisesRegex(ValueError, "requires --max-images"):
+            comparison.validate_run_scope(parser.parse_args(base + ["--pilot"]))
+        full = parser.parse_args(
+            base + ["--expected-images", "9525", "--expected-labels", "36721"]
+        )
+        pilot = parser.parse_args(base + ["--pilot", "--max-images", "100"])
+        self.assertEqual(comparison.validate_run_scope(full), "full")
+        self.assertEqual(comparison.validate_run_scope(pilot), "pilot")
+
+    def test_run_id_and_numeric_validators_reject_invalid_values(self):
+        for value in ("../escape", ".hidden", "white space"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                comparison.validate_run_id(value)
+        with self.assertRaises(argparse.ArgumentTypeError):
+            comparison.positive_int(0)
+        with self.assertRaises(argparse.ArgumentTypeError):
+            comparison.probability(1.1)
+
+
+class IndexAndPathTests(unittest.TestCase):
     def setUp(self):
-        self.temp_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp_directory.cleanup)
-        self.root = Path(self.temp_directory.name)
-        self.cache_dir = self.root / "cache"
-        self.cache_dir.mkdir()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
 
-        self.cache_patch = patch.object(
-            model_comparison,
-            "MODEL_SELECTION_DIR",
-            self.cache_dir,
-        )
-        self.cache_patch.start()
-        self.addCleanup(self.cache_patch.stop)
-
-    def _class_file(self):
-        path = self.root / model_comparison.MODELS["model1"]["names"]
-        path.parent.mkdir(parents=True, exist_ok=True)
+    def _write_index(self, rows):
+        path = self.root / "index.csv"
+        pd.DataFrame(rows).to_csv(path, index=False)
         return path
 
-    def test_class_file_is_preferred_and_blank_lines_are_ignored(self):
-        self._class_file().write_text(
-            "pallet\n\n forklift \n",
-            encoding="utf-8",
+    def _long_asset_pair(self):
+        directory = self.root / "logistics"
+        directory.mkdir(exist_ok=True)
+        stem = "x" * 251
+        image = directory / f"{stem}.jpg"
+        label = directory / f"{stem}.txt"
+        image_filesystem = comparison._filesystem_path(image)
+        label_filesystem = comparison._filesystem_path(label)
+        image_filesystem.write_bytes(b"encoded-long-path-image")
+        label_filesystem.write_text(
+            "0 0.5 0.5 0.5 0.5\n", encoding="utf-8"
         )
-        pd.DataFrame(
-            {"class_id": [0], "class_name": ["cached-name"]}
-        ).to_csv(self.cache_dir / "ground_truth_sample.csv", index=False)
+        self.addCleanup(image_filesystem.unlink, missing_ok=True)
+        self.addCleanup(label_filesystem.unlink, missing_ok=True)
+        return image, label
 
-        classes = model_comparison.load_classes(self.root, "sample")
+    @staticmethod
+    def _row(name="a", count=1):
+        return {
+            "image_file": f"{name}.jpg",
+            "image_path": f"techtrack/storage/logistics/{name}.jpg",
+            "label_path": f"techtrack/storage/logistics/{name}.txt",
+            "num_objects": count,
+        }
 
-        self.assertEqual(classes, ["pallet", "forklift"])
+    def test_both_storage_prefixes_resolve_through_storage_root(self):
+        expected = self.root / "logistics" / "a.jpg"
+        for logical in (
+            "techtrack/storage/logistics/a.jpg",
+            "detector_service/storage/logistics/a.jpg",
+            "logistics/a.jpg",
+        ):
+            self.assertEqual(comparison.resolve_indexed_path(logical, self.root), expected)
 
-    def test_contiguous_class_mapping_can_be_recovered_from_caches(self):
-        pd.DataFrame(
-            {
-                "class_id": [0, 1, 1],
-                "class_name": ["pallet", "forklift", "forklift"],
-            }
-        ).to_csv(self.cache_dir / "ground_truth_first_2.csv", index=False)
-
-        classes = model_comparison.load_classes(self.root, "first_2")
-
-        self.assertEqual(classes, ["pallet", "forklift"])
-
-    def test_conflicting_cached_names_are_rejected(self):
-        pd.DataFrame(
-            {"class_id": [0], "class_name": ["pallet"]}
-        ).to_csv(self.cache_dir / "ground_truth_full.csv", index=False)
-        pd.DataFrame(
-            {"class_id": [0], "class_name": ["crate"]}
-        ).to_csv(
-            self.cache_dir / "model1_raw_predictions_full.csv",
-            index=False,
+    def test_index_enforces_counts_expectations_and_unique_identifiers(self):
+        path = self._write_index([self._row()])
+        _, index = comparison.load_and_validate_index(
+            path, expected_images=1, expected_labels=1
         )
+        self.assertEqual(index["num_objects"].tolist(), [1])
+        with self.assertRaisesRegex(ValueError, "Expected 2 images"):
+            comparison.load_and_validate_index(path, expected_images=2)
+        with self.assertRaisesRegex(ValueError, "Expected 2 labels"):
+            comparison.load_and_validate_index(path, expected_labels=2)
 
-        with self.assertRaisesRegex(ValueError, "Conflicting names for class 0"):
-            model_comparison.load_classes(self.root, "full")
+        duplicate = self._write_index([self._row(), self._row()])
+        with self.assertRaisesRegex(ValueError, "duplicate image_file"):
+            comparison.load_and_validate_index(duplicate)
 
-    def test_incomplete_cached_class_ids_are_rejected(self):
-        pd.DataFrame(
-            {"class_id": [1], "class_name": ["forklift"]}
-        ).to_csv(self.cache_dir / "ground_truth_full.csv", index=False)
+    def test_index_rejects_missing_columns_and_fractional_counts(self):
+        path = self._write_index([{"image_file": "a.jpg"}])
+        with self.assertRaisesRegex(ValueError, "missing columns"):
+            comparison.load_and_validate_index(path)
+        path = self._write_index([self._row(count=1.5)])
+        with self.assertRaisesRegex(ValueError, "non-negative integers"):
+            comparison.load_and_validate_index(path)
 
-        with self.assertRaisesRegex(ValueError, "contiguous class IDs"):
-            model_comparison.load_classes(self.root, "full")
+    def test_parent_traversal_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "traverse"):
+            comparison.resolve_indexed_path("techtrack/storage/../secret", self.root)
 
-    def test_missing_asset_and_cache_mapping_is_reported(self):
-        with self.assertRaisesRegex(FileNotFoundError, "No raw cache"):
-            model_comparison.load_classes(self.root, "full")
-
-    def test_yolo_labels_are_converted_to_pixel_xywh(self):
-        label_path = self.root / "image.txt"
-        label_path.write_text(
-            "1 0.5 0.25 0.2 0.5\n"
-            "99 0.5 0.5 0.1 0.1\n"
-            "short row\n",
-            encoding="utf-8",
+    def test_absolute_paths_must_remain_inside_asset_root(self):
+        inside = self.root / "inside.jpg"
+        outside = self.root.parent / "outside.jpg"
+        self.assertEqual(
+            comparison.resolve_indexed_path(inside, self.root), inside.resolve()
         )
+        with self.assertRaisesRegex(ValueError, "inside external storage"):
+            comparison.resolve_indexed_path(outside, self.root)
 
-        rows = model_comparison.yolo_label_to_xywh(
-            label_path,
-            image_w=200,
-            image_h=100,
-            classes=["pallet", "forklift"],
+    def test_255_character_assets_resolve_hash_and_parse_canonically(self):
+        image, label = self._long_asset_pair()
+        logical_image = f"techtrack/storage/logistics/{image.name}"
+        logical_label = f"techtrack/storage/logistics/{label.name}"
+        resolved = comparison.resolve_indexed_path(logical_image, self.root)
+        self.assertEqual(resolved, image.absolute())
+        self.assertNotIn("\\\\?\\", str(resolved))
+        self.assertEqual(
+            comparison.resolve_indexed_path(
+                comparison._filesystem_path(image), self.root
+            ),
+            image.absolute(),
         )
-
+        identity = comparison._file_identity(resolved)
+        self.assertEqual(identity["path"], str(image.absolute()))
+        self.assertEqual(identity["size_bytes"], len(b"encoded-long-path-image"))
+        self.assertEqual(
+            identity["sha256"], hashlib.sha256(b"encoded-long-path-image").hexdigest()
+        )
+        rows = comparison.parse_yolo_labels_strict(
+            comparison.resolve_indexed_path(logical_label, self.root),
+            20, 10, ["pallet"],
+        )
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["class_id"], 1)
-        self.assertEqual(rows[0]["class_name"], "forklift")
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended-path decode test")
+    def test_long_windows_image_uses_byte_decode(self):
+        image, _ = self._long_asset_pair()
+
+        class FakeCV2:
+            IMREAD_COLOR = 1
+
+            def __init__(self):
+                self.encoded = None
+
+            def imread(self, path):
+                raise AssertionError(f"cv2.imread received long path: {path}")
+
+            def imdecode(self, encoded, mode):
+                self.encoded = bytes(encoded)
+                self.mode = mode
+                return np.zeros((3, 4, 3), dtype=np.uint8)
+
+        fake = FakeCV2()
+        frame = comparison._read_image_cv2(image, cv2_module=fake)
+        self.assertEqual(frame.shape, (3, 4, 3))
+        self.assertEqual(fake.encoded, b"encoded-long-path-image")
+        self.assertEqual(fake.mode, fake.IMREAD_COLOR)
+
+
+class VocabularyAndLabelTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def _assets(self, second_names="pallet\nperson\n"):
+        for number, names in ((1, "pallet\nperson\n"), (2, second_names)):
+            directory = self.root / f"yolo_model_{number}"
+            directory.mkdir()
+            (directory / f"yolov4-tiny-logistics_size_416_{number}.weights").touch()
+            (directory / f"yolov4-tiny-logistics_size_416_{number}.cfg").write_text(
+                "[yolo]\nclasses=2\n", encoding="utf-8"
+            )
+            (directory / "logistics.names").write_text(names, encoding="utf-8")
+
+    def test_identical_ordered_vocabularies_are_required(self):
+        self._assets()
+        _, bundles, classes = comparison.resolve_and_validate_model_bundles(self.root)
+        self.assertEqual(classes, ["pallet", "person"])
+        self.assertEqual(set(bundles), {"model1", "model2"})
+
+    def test_vocabulary_order_mismatch_is_rejected(self):
+        self._assets("person\npallet\n")
+        with self.assertRaisesRegex(ValueError, "vocabularies differ"):
+            comparison.resolve_and_validate_model_bundles(self.root)
+
+    def test_cfg_class_count_must_match_vocabulary(self):
+        self._assets()
+        cfg = (
+            self.root / "yolo_model_2" /
+            "yolov4-tiny-logistics_size_416_2.cfg"
+        )
+        cfg.write_text("[yolo]\nclasses=3\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "class count"):
+            comparison.resolve_and_validate_model_bundles(self.root)
+
+    def test_strict_yolo_parser_converts_valid_rows(self):
+        path = self.root / "a.txt"
+        path.write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        rows = comparison.parse_yolo_labels_strict(path, 200, 100, ["pallet"])
+        self.assertEqual(len(rows), 1)
         self.assertEqual(
             [rows[0][field] for field in ("bbox_x", "bbox_y", "bbox_w", "bbox_h")],
-            [80.0, 0.0, 40.0, 50.0],
-        )
-
-    def test_empty_label_file_produces_no_rows(self):
-        label_path = self.root / "empty.txt"
-        label_path.write_text("  \n", encoding="utf-8")
-
-        self.assertEqual(
-            model_comparison.yolo_label_to_xywh(label_path, 20, 10, ["item"]),
-            [],
-        )
-
-
-class EvidencePipelineTests(unittest.TestCase):
-    def setUp(self):
-        self.temp_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp_directory.cleanup)
-        self.root = Path(self.temp_directory.name)
-        self.cache_dir = self.root / "outputs"
-        self.cache_dir.mkdir()
-        self.cache_patch = patch.object(
-            model_comparison,
-            "MODEL_SELECTION_DIR",
-            self.cache_dir,
-        )
-        self.cache_patch.start()
-        self.addCleanup(self.cache_patch.stop)
-
-        self.index = pd.DataFrame(
-            [
-                {
-                    "image_file": "a.jpg",
-                    "image_path": "images/a.jpg",
-                    "label_path": "labels/a.txt",
-                },
-                {
-                    "image_file": "b.jpg",
-                    "image_path": "images/b.jpg",
-                    "label_path": "labels/b.txt",
-                },
-            ]
-        )
-
-    def test_ground_truth_cache_is_reused_without_decoding_images(self):
-        expected = pd.DataFrame(
-            [
-                {
-                    "image_file": "cached.jpg",
-                    "image_path": "images/cached.jpg",
-                    "class_id": 0,
-                    "class_name": "pallet",
-                    "bbox_x": 1.0,
-                    "bbox_y": 2.0,
-                    "bbox_w": 3.0,
-                    "bbox_h": 4.0,
-                }
-            ]
-        )
-        expected.to_csv(self.cache_dir / "ground_truth_sample.csv", index=False)
-
-        with patch.object(cv2, "imread") as imread:
-            result = model_comparison.build_ground_truth(
-                self.index,
-                ["pallet"],
-                self.root,
-                "sample",
-            )
-
-        imread.assert_not_called()
-        pd.testing.assert_frame_equal(result, expected)
-
-    def test_ground_truth_builder_uses_image_dimensions_and_skips_bad_images(self):
-        for label_name, contents in (
-            ("a.txt", "0 0.5 0.5 0.5 0.5\n"),
-            ("b.txt", "0 0.5 0.5 0.5 0.5\n"),
-        ):
-            label_path = self.root / "labels" / label_name
-            label_path.parent.mkdir(parents=True, exist_ok=True)
-            label_path.write_text(contents, encoding="utf-8")
-
-        with patch.object(
-            cv2,
-            "imread",
-            side_effect=[np.zeros((100, 200, 3), dtype=np.uint8), None],
-        ):
-            result = model_comparison.build_ground_truth(
-                self.index,
-                ["pallet"],
-                self.root,
-                "sample",
-                force=True,
-            )
-
-        self.assertEqual(result.columns.tolist(), model_comparison.GT_COLUMNS)
-        self.assertEqual(len(result), 1)
-        self.assertEqual(
-            result.loc[0, ["bbox_x", "bbox_y", "bbox_w", "bbox_h"]].tolist(),
             [50.0, 25.0, 100.0, 50.0],
         )
-        self.assertTrue((self.cache_dir / "ground_truth_sample.csv").exists())
 
-    def test_detection_serialization_keeps_full_score_vector(self):
-        image = pd.Series(
-            {"image_file": "a.jpg", "image_path": "images/a.jpg"}
+    def test_strict_yolo_parser_rejects_extra_malformed_and_invalid_rows(self):
+        cases = (
+            ("0 0.5 0.5 0.5 0.5 extra\n", "exactly five"),
+            ("zero 0.5 0.5 0.5 0.5\n", "numeric"),
+            ("0 nan 0.5 0.5 0.5\n", "finite"),
+            ("2 0.5 0.5 0.5 0.5\n", "class identifier"),
+            ("0 0.5 0.5 0 0.5\n", "normalized YOLO box"),
         )
+        for position, (contents, message) in enumerate(cases):
+            path = self.root / f"bad-{position}.txt"
+            path.write_text(contents, encoding="utf-8")
+            with self.subTest(contents=contents), self.assertRaisesRegex(ValueError, message):
+                comparison.parse_yolo_labels_strict(path, 10, 10, ["pallet"])
 
-        record = model_comparison.serialize_detection(
-            "model2",
-            image,
-            [1, 2, 3, 4],
-            class_id=1,
-            object_score=0.8,
-            score_vector=np.asarray([0.1, 0.9]),
-            classes=["pallet", "forklift"],
+
+class EvidenceAndMetricTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "logistics").mkdir()
+        (self.root / "logistics" / "a.jpg").touch()
+        (self.root / "logistics" / "a.txt").write_text(
+            "0 0.25 0.25 0.5 0.5\n", encoding="utf-8"
         )
+        self.index = pd.DataFrame([{
+            "image_file": "a.jpg", "image_path": "techtrack/storage/logistics/a.jpg",
+            "label_path": "techtrack/storage/logistics/a.txt", "num_objects": 1,
+        }])
+        self.frame = np.zeros((20, 20, 3), dtype=np.uint8)
 
-        self.assertEqual(record["class_name"], "forklift")
-        self.assertEqual(record["predicted_class_score"], 0.9)
-        self.assertAlmostEqual(record["combined_confidence"], 0.72)
-        self.assertEqual(json.loads(record["class_scores_json"]), [0.1, 0.9])
-
-    def test_unknown_class_serializes_with_zero_selected_probability(self):
-        image = {"image_file": "a.jpg", "image_path": "images/a.jpg"}
-
-        record = model_comparison.serialize_detection(
-            "model1",
-            image,
-            [1, 2, 3, 4],
-            class_id=5,
-            object_score=0.8,
-            score_vector=[0.1, 0.9],
-            classes=["pallet", "forklift"],
-        )
-
-        self.assertEqual(record["class_name"], "unknown")
-        self.assertEqual(record["predicted_class_score"], 0.0)
-        self.assertEqual(record["combined_confidence"], 0.0)
-
-    def test_raw_inference_reports_all_missing_model_assets(self):
-        paths = {
-            "weights": Path("missing.weights"),
-            "cfg": Path("missing.cfg"),
-            "names": Path("missing.names"),
+    def _prediction_row(self, **overrides):
+        row = {
+            "model": "model1", "image_index": 1, "image_file": "a.jpg",
+            "image_path": self.index.loc[0, "image_path"], "bbox_x": 0,
+            "bbox_y": 0, "bbox_w": 10, "bbox_h": 10, "class_id": 0,
+            "class_name": "pallet", "object_score": 1.0,
+            "predicted_class_score": 1.0, "combined_confidence": 1.0,
+            "nms_iou_threshold": 0.3,
         }
+        row.update(overrides)
+        return row
 
-        with self.assertRaisesRegex(FileNotFoundError, "missing.weights") as error:
-            model_comparison.run_raw_inference_for_model(
-                "model1",
-                paths,
-                self.index.iloc[:0],
-                ["pallet"],
-                self.root,
-                "sample",
+    def _ledger_row(self, **overrides):
+        row = {
+            "model": "model1", "image_index": 1, "image_file": "a.jpg",
+            "image_path": self.index.loc[0, "image_path"], "status": "processed",
+            "raw_candidate_count": 1, "post_nms_prediction_count": 1,
+            "read_seconds": 0.1, "predict_seconds": 0.2,
+            "postprocess_seconds": 0.3, "nms_seconds": 0.4,
+            "total_seconds": 1.0,
+        }
+        row.update(overrides)
+        return row
+
+    def test_ground_truth_fails_on_unreadable_image_and_count_mismatch(self):
+        with self.assertRaisesRegex(ValueError, "Unable to read"):
+            comparison.build_ground_truth(
+                self.index, ["pallet"], self.root, image_reader=lambda _: None
+            )
+        bad = self.index.copy()
+        bad["num_objects"] = 2
+        with self.assertRaisesRegex(ValueError, "Label count mismatch"):
+            comparison.build_ground_truth(
+                bad, ["pallet"], self.root, image_reader=lambda _: self.frame
             )
 
-        self.assertIn("missing.cfg", str(error.exception))
-        self.assertIn("missing.names", str(error.exception))
+    def test_zero_prediction_image_is_preserved_in_ledger(self):
+        bundle = {name: self.root / name for name in ("weights", "cfg", "names")}
+        for path in bundle.values():
+            path.touch()
+        prediction_path = self.root / "predictions.csv"
+        ledger_path = self.root / "ledger.csv"
+        with comparison._atomic_csv_stream(ledger_path, comparison.LEDGER_COLUMNS) as writer:
+            result = comparison.run_inference_for_model(
+                "model1", bundle, self.index, ["pallet", "person"], self.root,
+                0.001, 0.3, prediction_path, writer,
+                image_reader=lambda _: self.frame, detector_factory=EmptyDetector,
+            )
+        predictions = pd.read_csv(prediction_path)
+        ledger = pd.read_csv(ledger_path)
+        self.assertTrue(predictions.empty)
+        self.assertEqual(result["post_nms_predictions"], 0)
+        self.assertEqual(ledger["post_nms_prediction_count"].tolist(), [0])
+        comparison.validate_ledger(ledger, self.index, ["model1"])
 
-    def test_raw_inference_uses_detector_and_skips_unreadable_images(self):
-        paths = {
-            "weights": Path("model/model.weights"),
-            "cfg": Path("model/model.cfg"),
-            "names": Path("model/classes.names"),
+    def test_incomplete_ledger_is_rejected(self):
+        empty = pd.DataFrame(columns=comparison.LEDGER_COLUMNS)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            comparison.validate_ledger(empty, self.index, ["model1"])
+
+    def test_prediction_image_keys_and_per_image_counts_are_strict(self):
+        policy = {
+            "candidate_floor": 0.001, "deployment_confidence": 0.5,
+            "nms_iou_threshold": 0.3,
         }
-        for relative_path in paths.values():
-            asset = self.root / relative_path
-            asset.parent.mkdir(parents=True, exist_ok=True)
-            asset.touch()
-
-        detector = Mock()
-        detector.predict.return_value = ["raw-output"]
-        detector.post_process.return_value = (
-            [[1, 2, 3, 4]],
-            [1],
-            [0.8],
-            [[0.1, 0.9]],
+        invalid = pd.DataFrame(
+            [self._prediction_row(image_index=2)],
+            columns=comparison.PREDICTION_COLUMNS,
         )
-
-        from detector_service.modules.inference import model as detector_module
-
-        with patch.object(
-            detector_module,
-            "Detector",
-            return_value=detector,
-        ) as constructor, patch.object(
-            cv2,
-            "imread",
-            side_effect=[np.zeros((10, 20, 3), dtype=np.uint8), None],
-        ):
-            result = model_comparison.run_raw_inference_for_model(
-                "model2",
-                paths,
-                self.index,
-                ["pallet", "forklift"],
-                self.root,
-                "sample",
-                force=True,
+        with self.assertRaisesRegex(ValueError, "image keys"):
+            comparison.validate_prediction_table(
+                invalid, "model1", self.index, ["pallet", "person"], policy
             )
 
-        constructor.assert_called_once_with(
-            str(self.root / paths["weights"]),
-            str(self.root / paths["cfg"]),
-            str(self.root / paths["names"]),
-            score_threshold=0.5,
-        )
-        detector.predict.assert_called_once()
-        detector.post_process.assert_called_once_with(["raw-output"])
-        self.assertEqual(result.columns.tolist(), model_comparison.RAW_COLUMNS)
-        self.assertEqual(len(result), 1)
-        self.assertAlmostEqual(result.loc[0, "combined_confidence"], 0.72)
-        self.assertTrue(
-            (self.cache_dir / "model2_raw_predictions_sample.csv").exists()
-        )
-
-    def test_raw_cache_is_checked_before_model_assets(self):
-        cached = pd.DataFrame(
-            [{column: 0 for column in model_comparison.RAW_COLUMNS}]
-        )
-        cached["model"] = "model1"
-        cached["image_file"] = "a.jpg"
-        cached["image_path"] = "images/a.jpg"
-        cached["class_name"] = "pallet"
-        cached["class_scores_json"] = "[1.0]"
-        cached.to_csv(
-            self.cache_dir / "model1_raw_predictions_sample.csv",
-            index=False,
-        )
-
-        result = model_comparison.run_raw_inference_for_model(
-            "model1",
-            {"weights": Path("absent.weights")},
-            self.index,
-            ["pallet"],
-            self.root,
-            "sample",
-        )
-
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result.loc[0, "image_file"], "a.jpg")
-
-    def test_class_aware_nms_is_applied_per_image(self):
-        image = {"image_file": "a.jpg", "image_path": "images/a.jpg"}
-        raw_records = [
-            model_comparison.serialize_detection(
-                "model2", image, [0, 0, 10, 10], 0, 0.9, [0.9, 0.1], ["a", "b"]
-            ),
-            model_comparison.serialize_detection(
-                "model2", image, [0, 0, 10, 10], 0, 0.8, [0.9, 0.1], ["a", "b"]
-            ),
-            model_comparison.serialize_detection(
-                "model2", image, [0, 0, 10, 10], 1, 0.85, [0.1, 0.9], ["a", "b"]
-            ),
-        ]
-        raw = pd.DataFrame(raw_records, columns=model_comparison.RAW_COLUMNS)
-
-        result = model_comparison.apply_nms_for_model(
-            "model2",
-            raw,
-            self.index.iloc[[0]],
-            ["a", "b"],
-            "sample",
-            force=True,
-        )
-
-        self.assertEqual(result.columns.tolist(), model_comparison.PRED_COLUMNS)
-        self.assertEqual(result["class_id"].tolist(), [0, 1])
-        np.testing.assert_allclose(result["object_score"], [0.9, 0.85])
-        np.testing.assert_allclose(result["nms_threshold"], [0.3, 0.3])
-
-    def test_empty_raw_table_writes_empty_post_nms_schema(self):
-        result = model_comparison.apply_nms_for_model(
-            "model1",
-            pd.DataFrame(columns=model_comparison.RAW_COLUMNS),
-            self.index,
-            ["pallet"],
-            "empty",
-            force=True,
-        )
-
-        self.assertEqual(len(result), 0)
-        self.assertEqual(result.columns.tolist(), model_comparison.PRED_COLUMNS)
-
-
-class EvaluationAssemblyTests(unittest.TestCase):
-    @staticmethod
-    def _index():
-        return pd.DataFrame(
-            {
-                "image_file": ["a.jpg", "b.jpg", "c.jpg"],
-                "image_path": ["a.jpg", "b.jpg", "c.jpg"],
-            }
-        )
-
-    def test_metric_lists_follow_index_order_and_represent_empty_images(self):
         predictions = pd.DataFrame(
-            [
-                {
-                    "image_file": "b.jpg",
-                    "bbox_x": 1,
-                    "bbox_y": 2,
-                    "bbox_w": 3,
-                    "bbox_h": 4,
-                    "class_id": 1,
-                    "object_score": 0.8,
-                    "class_scores_json": "[0.1, 0.9]",
-                }
-            ]
+            [self._prediction_row()], columns=comparison.PREDICTION_COLUMNS
         )
-        labels = pd.DataFrame(
-            [
-                {
-                    "image_file": "c.jpg",
-                    "bbox_x": 5,
-                    "bbox_y": 6,
-                    "bbox_w": 7,
-                    "bbox_h": 8,
-                    "class_id": 0,
-                }
-            ]
+        predictions = comparison.validate_prediction_table(
+            predictions, "model1", self.index, ["pallet", "person"], policy
         )
-
-        result = model_comparison.build_metric_lists(
-            self._index(),
-            predictions,
-            labels,
+        ledger = pd.DataFrame(
+            [self._ledger_row(post_nms_prediction_count=0)],
+            columns=comparison.LEDGER_COLUMNS,
         )
+        ledger = comparison.validate_ledger(ledger, self.index, ["model1"])
+        with self.assertRaisesRegex(ValueError, "disagree by image"):
+            comparison.validate_prediction_ledger_alignment(
+                predictions, ledger, "model1", self.index
+            )
 
-        self.assertEqual(result[0], [[], [[1, 2, 3, 4]], []])
-        self.assertEqual(result[1], [[], [1], []])
-        self.assertEqual(result[2], [[], [0.8], []])
-        self.assertEqual(result[3], [[], [[0.1, 0.9]], []])
-        self.assertEqual(result[4], [[], [], [[5, 6, 7, 8]]])
-        self.assertEqual(result[5], [[], [], [0]])
-
-    def test_perfect_detection_produces_per_class_and_mean_ap(self):
-        idx = self._index().iloc[[0]].copy()
-        prediction = pd.DataFrame(
-            [
-                {
-                    "image_file": "a.jpg",
-                    "bbox_x": 0,
-                    "bbox_y": 0,
-                    "bbox_w": 10,
-                    "bbox_h": 10,
-                    "class_id": 0,
-                    "object_score": 1.0,
-                    "class_scores_json": "[1.0, 0.0]",
-                }
-            ]
+    def test_ledger_validates_paths_counts_timings_and_summary(self):
+        valid = pd.DataFrame(
+            [self._ledger_row()], columns=comparison.LEDGER_COLUMNS
         )
-        ground_truth = pd.DataFrame(
-            [
-                {
-                    "image_file": "a.jpg",
-                    "bbox_x": 0,
-                    "bbox_y": 0,
-                    "bbox_w": 10,
-                    "bbox_h": 10,
-                    "class_id": 0,
-                }
-            ]
-        )
-
-        summary, per_class = model_comparison.evaluate_with_metrics_py(
-            "model1",
-            idx,
-            prediction,
-            ground_truth,
-            ["pallet", "forklift"],
-        )
-
-        self.assertAlmostEqual(summary["mAP@0.5_11_point"], 0.5)
-        self.assertEqual(summary["total_ground_truth"], 1)
-        self.assertEqual(summary["total_predictions_after_nms"], 1)
-        self.assertEqual(summary["evaluation_rows"], 1)
-        self.assertEqual(summary["eval_type"], "combined")
-        np.testing.assert_allclose(per_class["ap_11_point"], [1.0, 0.0])
-        self.assertEqual(per_class["ground_truth_count"].tolist(), [1, 0])
-        self.assertEqual(per_class["prediction_count"].tolist(), [1, 0])
-
-    def test_figure_builder_writes_comparison_and_delta_artifacts(self):
-        comparison = pd.DataFrame(
+        ledger = comparison.validate_ledger(valid, self.index, ["model1"])
+        comparison.validate_inference_summary(
             {
-                "class_name": ["pallet", "forklift"],
-                "model1_ap": [0.2, 0.6],
-                "model2_ap": [0.4, 0.5],
-                "ap_difference_model2_minus_model1": [0.2, -0.1],
-            }
+                "images_processed": 1, "raw_candidates": 1,
+                "post_nms_predictions": 1,
+            },
+            ledger, "model1", 1,
         )
-        pyplot = types.ModuleType("matplotlib.pyplot")
-        for method_name in (
-            "figure",
-            "barh",
-            "yticks",
-            "xlim",
-            "xlabel",
-            "ylabel",
-            "title",
-            "grid",
-            "legend",
-            "tight_layout",
-            "savefig",
-            "close",
-            "axvline",
-        ):
-            setattr(pyplot, method_name, Mock(name=method_name))
-        matplotlib = types.ModuleType("matplotlib")
-        matplotlib.__path__ = []
-        matplotlib.pyplot = pyplot
-
-        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
-            model_comparison,
-            "FIGURE_DIR",
-            Path(temp_dir),
-        ), patch.dict(
-            sys.modules,
-            {"matplotlib": matplotlib, "matplotlib.pyplot": pyplot},
-        ):
-            model_comparison.build_figures(comparison)
-
-        saved_paths = [call.args[0].name for call in pyplot.savefig.call_args_list]
-        self.assertEqual(
-            saved_paths,
-            ["01_per_class_ap.png", "02_per_class_ap_delta.png"],
+        cases = (
+            ({"image_path": "wrong.jpg"}, "paths"),
+            ({"raw_candidate_count": 0}, "exceeds raw"),
+            ({"read_seconds": -0.1, "total_seconds": 0.8}, "read_seconds"),
+            ({"total_seconds": 2.0}, "timing totals"),
+            ({"image_index": 1.5}, "positions"),
         )
-        self.assertEqual(pyplot.close.call_count, 2)
+        for overrides, message in cases:
+            table = pd.DataFrame(
+                [self._ledger_row(**overrides)],
+                columns=comparison.LEDGER_COLUMNS,
+            )
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(
+                ValueError, message
+            ):
+                comparison.validate_ledger(table, self.index, ["model1"])
+        with self.assertRaisesRegex(ValueError, "summary disagrees"):
+            comparison.validate_inference_summary(
+                {
+                    "images_processed": 1, "raw_candidates": 0,
+                    "post_nms_predictions": 1,
+                },
+                ledger, "model1", 1,
+            )
+
+    def test_raw_class_score_vector_dimension_is_validated(self):
+        bundle = {name: self.root / name for name in ("weights", "cfg", "names")}
+        for path in bundle.values():
+            path.touch()
+        with comparison._atomic_csv_stream(
+            self.root / "wrong-vector-ledger.csv", comparison.LEDGER_COLUMNS
+        ) as writer:
+            with self.assertRaisesRegex(ValueError, "vector length"):
+                comparison.run_inference_for_model(
+                    "model1", bundle, self.index, ["pallet", "person"], self.root,
+                    0.001, 0.3, self.root / "wrong-vector-predictions.csv", writer,
+                    image_reader=lambda _: self.frame,
+                    detector_factory=WrongVectorDetector,
+                )
+
+    def test_dual_metrics_report_perfect_present_class_and_empty_class(self):
+        ground_truth = comparison.build_ground_truth(
+            self.index, ["pallet", "person"], self.root,
+            image_reader=lambda _: self.frame,
+        )
+        predictions = pd.DataFrame(
+            [self._prediction_row()], columns=comparison.PREDICTION_COLUMNS
+        )
+        policy = {
+            "candidate_floor": 0.001, "deployment_confidence": 0.5,
+            "nms_iou_threshold": 0.3, "map_iou_threshold": 0.5,
+        }
+        aggregate, per_class = comparison.evaluate_model(
+            "model1", self.index, predictions, ground_truth,
+            ["pallet", "person"], policy,
+        )
+        self.assertAlmostEqual(aggregate["mAP50_101pt"], 0.5)
+        self.assertAlmostEqual(aggregate["threshold_constrained_mAP50_11pt"], 0.5)
+        self.assertEqual(aggregate["deployment_true_positives"], 1)
+        self.assertEqual(per_class["deployment_f1"].tolist(), [1.0, 0.0])
+
+
+class FullRunTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.assets = self.root / "storage"
+        logistics = self.assets / "logistics"
+        logistics.mkdir(parents=True)
+        (logistics / "a.jpg").touch()
+        (logistics / "a.txt").write_text("0 0.25 0.25 0.5 0.5\n", encoding="utf-8")
+        for number in (1, 2):
+            directory = self.assets / f"yolo_model_{number}"
+            directory.mkdir()
+            (directory / f"yolov4-tiny-logistics_size_416_{number}.weights").touch()
+            (directory / f"yolov4-tiny-logistics_size_416_{number}.cfg").write_text(
+                "[yolo]\nclasses=2\n", encoding="utf-8"
+            )
+            (directory / "logistics.names").write_text("pallet\nperson\n", encoding="utf-8")
+        self.index_path = self.root / "index.csv"
+        pd.DataFrame([{
+            "image_file": "a.jpg",
+            "image_path": "techtrack/storage/logistics/a.jpg",
+            "label_path": "techtrack/storage/logistics/a.txt",
+            "num_objects": 1,
+        }]).to_csv(self.index_path, index=False)
+        self.output = self.root / "runs"
+        self.frame = np.zeros((20, 20, 3), dtype=np.uint8)
+
+    def _args(self, run_id="integration"):
+        return argparse.Namespace(
+            dataset_index=self.index_path, asset_root=self.assets,
+            output_root=self.output, run_id=run_id,
+            pilot=False,
+            expected_images=1, expected_labels=1, max_images=None,
+            candidate_floor=0.001, deployment_confidence=0.5, nms_iou=0.3,
+        )
+
+    def test_complete_run_is_verified_and_promoted_without_figures(self):
+        final, manifest, aggregate, per_class = comparison.run_experiment(
+            self._args(), detector_factory=FakeDetector,
+            image_reader=lambda _: self.frame,
+        )
+        expected = {
+            "ground_truth.csv", "model1_predictions.csv", "model2_predictions.csv",
+            "inference_ledger.csv", "aggregate_metrics.csv", "per_class_metrics.csv",
+            "run_manifest.json",
+        }
+        self.assertEqual({path.name for path in final.iterdir()}, expected)
+        self.assertFalse((self.output / ".integration.incomplete").exists())
+        self.assertEqual(manifest["status"], "complete")
+        self.assertEqual(manifest["dataset"]["selected_images"], 1)
+        self.assertEqual(manifest["dataset"]["selected_labels"], 1)
+        self.assertEqual(manifest["run_scope"], "full")
+        self.assertEqual(manifest["dataset"]["asset_identity"]["files"], 2)
+        self.assertEqual(len(aggregate), 2)
+        self.assertEqual(len(per_class), 4)
+        self.assertTrue(comparison.verify_run_directory(final, manifest))
+
+    def test_explicit_pilot_scope_is_recorded(self):
+        args = self._args("pilot")
+        args.pilot = True
+        args.max_images = 1
+        args.expected_images = None
+        args.expected_labels = None
+        final, manifest, _, _ = comparison.run_experiment(
+            args, detector_factory=FakeDetector,
+            image_reader=lambda _: self.frame,
+        )
+        self.assertEqual(manifest["run_scope"], "pilot")
+        self.assertEqual(manifest["dataset"]["selection_max_images"], 1)
+        self.assertTrue(comparison.verify_run_directory(final, manifest))
+
+    def test_long_dataset_paths_never_leak_device_prefixes_into_evidence(self):
+        logistics = self.assets / "logistics"
+        stem = "m" * 251
+        image = logistics / f"{stem}.jpg"
+        label = logistics / f"{stem}.txt"
+        image_filesystem = comparison._filesystem_path(image)
+        label_filesystem = comparison._filesystem_path(label)
+        image_filesystem.write_bytes(b"long-image")
+        label_filesystem.write_text(
+            "0 0.25 0.25 0.5 0.5\n", encoding="utf-8"
+        )
+        self.addCleanup(image_filesystem.unlink, missing_ok=True)
+        self.addCleanup(label_filesystem.unlink, missing_ok=True)
+        logical_image = f"techtrack/storage/logistics/{image.name}"
+        logical_label = f"techtrack/storage/logistics/{label.name}"
+        pd.DataFrame([{
+            "image_file": image.name, "image_path": logical_image,
+            "label_path": logical_label, "num_objects": 1,
+        }]).to_csv(self.index_path, index=False)
+
+        final, manifest, _, _ = comparison.run_experiment(
+            self._args("long-path"), detector_factory=FakeDetector,
+            image_reader=lambda _: self.frame,
+        )
+        serialized = json.dumps(manifest, sort_keys=True)
+        self.assertNotIn("\\\\?\\", serialized)
+        self.assertEqual(manifest["external_storage_root"], str(self.assets.resolve()))
+        predictions = pd.read_csv(final / "model1_predictions.csv")
+        ground_truth = pd.read_csv(final / "ground_truth.csv")
+        self.assertEqual(predictions["image_path"].tolist(), [logical_image])
+        self.assertEqual(ground_truth["image_path"].tolist(), [logical_image])
+
+    def test_completed_run_is_never_blindly_reused_or_overwritten(self):
+        comparison.run_experiment(
+            self._args(), detector_factory=FakeDetector,
+            image_reader=lambda _: self.frame,
+        )
+        with self.assertRaisesRegex(FileExistsError, "Refusing to overwrite"):
+            comparison.run_experiment(
+                self._args(), detector_factory=FakeDetector,
+                image_reader=lambda _: self.frame,
+            )
+
+    def test_failure_leaves_unpromoted_staging_directory(self):
+        with self.assertRaisesRegex(ValueError, "Unable to read"):
+            comparison.run_experiment(
+                self._args("failed"), detector_factory=FakeDetector,
+                image_reader=lambda _: None,
+            )
+        self.assertTrue((self.output / ".failed.incomplete").is_dir())
+        self.assertFalse((self.output / "failed").exists())
+
+    def test_manifest_verification_detects_artifact_tampering(self):
+        final, manifest, _, _ = comparison.run_experiment(
+            self._args(), detector_factory=FakeDetector,
+            image_reader=lambda _: self.frame,
+        )
+        with (final / "aggregate_metrics.csv").open("a", encoding="utf-8") as handle:
+            handle.write("tampered\n")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            comparison.verify_run_directory(final, manifest)
+
+    def test_manifest_verification_reads_disk_and_rechecks_inputs(self):
+        final, manifest, _, _ = comparison.run_experiment(
+            self._args(), detector_factory=FakeDetector,
+            image_reader=lambda _: self.frame,
+        )
+        manifest_path = final / "run_manifest.json"
+        changed_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        changed_manifest["environment"]["platform"] = "tampered"
+        manifest_path.write_text(
+            json.dumps(changed_manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            comparison.verify_run_directory(final, manifest)
+
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        label = self.assets / "logistics" / "a.txt"
+        label.write_text(
+            label.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(RuntimeError, "dataset_assets"):
+            comparison.verify_run_directory(final, manifest)
+
+    def test_input_mutation_prevents_atomic_promotion(self):
+        label = self.assets / "logistics" / "a.txt"
+
+        class MutatingDetector(FakeDetector):
+            changed = False
+
+            def predict(self, frame):
+                if not type(self).changed:
+                    label.write_text(
+                        label.read_text(encoding="utf-8") + "\n",
+                        encoding="utf-8",
+                    )
+                    type(self).changed = True
+                return super().predict(frame)
+
+        with self.assertRaisesRegex(RuntimeError, "dataset_assets"):
+            comparison.run_experiment(
+                self._args("mutated"), detector_factory=MutatingDetector,
+                image_reader=lambda _: self.frame,
+            )
+        self.assertTrue((self.output / ".mutated.incomplete").is_dir())
+        self.assertFalse((self.output / "mutated").exists())
 
 
 if __name__ == "__main__":

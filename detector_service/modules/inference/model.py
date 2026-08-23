@@ -7,6 +7,9 @@ import cv2
 import numpy as np
 
 
+OPENCV_ERRORS = (cv2.error,) if hasattr(cv2, "error") else ()
+
+
 class Detector:
     """Load a YOLO network, run frames, and decode raw output candidates."""
 
@@ -17,13 +20,47 @@ class Detector:
         class_path: str,
         score_threshold: float = 0.5,
     ) -> None:
-        self.net = cv2.dnn.readNet(weights_path, config_path)
+        try:
+            threshold = float(score_threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "score_threshold must be a number between 0 and 1"
+            ) from exc
+        if not np.isfinite(threshold) or threshold < 0.0 or threshold > 1.0:
+            raise ValueError("score_threshold must be between 0 and 1")
+
         with Path(class_path).open("r", encoding="utf-8") as class_file:
             self.classes = [line.strip() for line in class_file]
+        if not self.classes:
+            raise ValueError("Class vocabulary must contain at least one class name.")
 
+        empty_lines = [
+            index
+            for index, class_name in enumerate(self.classes, start=1)
+            if not class_name
+        ]
+        if empty_lines:
+            raise ValueError(
+                "Class vocabulary contains empty class names on line(s): "
+                + ", ".join(str(index) for index in empty_lines)
+            )
+
+        duplicate_names = []
+        seen_names = set()
+        for class_name in self.classes:
+            if class_name in seen_names and class_name not in duplicate_names:
+                duplicate_names.append(class_name)
+            seen_names.add(class_name)
+        if duplicate_names:
+            raise ValueError(
+                "Class vocabulary contains duplicate class names: "
+                + ", ".join(repr(name) for name in duplicate_names)
+            )
+
+        self.net = cv2.dnn.readNet(weights_path, config_path)
         self.img_height: int = 0
         self.img_width: int = 0
-        self.score_threshold = score_threshold
+        self.score_threshold = threshold
 
     def _output_layer_names(self) -> List[str]:
         """Resolve one-based OpenCV output indices, falling back on failure."""
@@ -39,7 +76,7 @@ class Detector:
                 if 0 <= zero_based < len(layer_names):
                     resolved.append(layer_names[zero_based])
             return resolved
-        except Exception:
+        except OPENCV_ERRORS:
             return []
 
     def predict(self, preprocessed_frame: np.ndarray) -> List[np.ndarray]:

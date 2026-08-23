@@ -117,6 +117,24 @@ class SummaryFixture(unittest.TestCase):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_default_paths_follow_the_canonical_stage_hierarchy(self):
+        self.assertEqual(
+            dataset_summary.DEFAULT_DATASET_INDEX,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "00_dataset_inventory"
+            / "dataset_index.csv",
+        )
+        self.assertEqual(
+            dataset_summary.DEFAULT_OUTPUT_DIR,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "02_dataset_analysis"
+            / "01_dataset_summary",
+        )
+
     def test_density_bucket_boundaries_are_stable(self):
         expected = {
             0: "1",
@@ -168,7 +186,7 @@ class SourceValidationTests(SummaryFixture):
         self.assertEqual(counts, [1, 3, 5])
 
     def test_missing_source_has_actionable_message(self):
-        with self.assertRaisesRegex(FileNotFoundError, "02_build_dataset_index.py"):
+        with self.assertRaisesRegex(FileNotFoundError, "00_build_dataset_inventory.py"):
             dataset_summary.load_and_validate_sources(
                 self.root / "missing.csv",
                 self.class_path,

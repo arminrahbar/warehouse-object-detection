@@ -14,6 +14,7 @@ try:
     import cv2  # noqa: F401
 except ModuleNotFoundError:
     cv2_stub = types.ModuleType("cv2")
+    cv2_stub.error = type("error", (Exception,), {})
     cv2_stub.FONT_HERSHEY_SIMPLEX = 0
     cv2_stub.VideoCapture = Mock(name="VideoCapture")
     cv2_stub.dnn = types.SimpleNamespace()
@@ -146,6 +147,7 @@ class PreprocessingTests(unittest.TestCase):
 
         self.assertEqual(stream.filename, "udp://127.0.0.1:23000")
         self.assertEqual(stream.drop_rate, 10)
+        self.assertEqual(stream.network_read_retries, 3)
 
     def test_first_and_every_nth_decoded_frame_are_yielded(self):
         capture = _CaptureDouble(self._frames(8))
@@ -174,6 +176,24 @@ class PreprocessingTests(unittest.TestCase):
             )
 
         self.assertEqual(capture.read_count, 1)
+        self.assertTrue(capture.released)
+
+    def test_finite_http_video_ends_normally_at_eof(self):
+        capture = _CaptureDouble(self._frames(1))
+
+        with patch(
+            "detector_service.modules.inference.preprocessing.cv2.VideoCapture",
+            return_value=capture,
+        ):
+            selected = list(
+                Preprocessing(
+                    "https://media.example/clip.mp4",
+                    drop_rate=1,
+                ).capture_video()
+            )
+
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(capture.read_count, 2)
         self.assertTrue(capture.released)
 
     def test_closing_partially_consumed_generator_releases_source(self):
@@ -230,19 +250,62 @@ class PreprocessingTests(unittest.TestCase):
 
         self.assertEqual(capture.read_count, 0)
 
-    def test_capture_that_closes_before_reading_is_released(self):
-        capture = _CaptureDouble(self._frames(2))
-        capture.isOpened = Mock(side_effect=[True, False])
+    def test_network_source_recovers_from_a_transient_read_failure(self):
+        expected = self._frames(1)[0]
+        capture = _CaptureDouble([])
+        capture.read = Mock(side_effect=[(False, None), (True, expected)])
 
         with patch(
             "detector_service.modules.inference.preprocessing.cv2.VideoCapture",
             return_value=capture,
         ):
-            selected = list(Preprocessing("camera", drop_rate=1).capture_video())
+            selected = Preprocessing(
+                "udp://127.0.0.1:23000",
+                drop_rate=1,
+                network_read_retries=2,
+            ).capture_video()
+            actual = next(selected)
+            selected.close()
 
-        self.assertEqual(selected, [])
-        self.assertEqual(capture.read_count, 0)
+        np.testing.assert_array_equal(actual, expected)
+        self.assertEqual(capture.read.call_count, 2)
         self.assertTrue(capture.released)
+
+    def test_network_source_raises_after_bounded_read_retries(self):
+        capture = _CaptureDouble([])
+
+        with patch(
+            "detector_service.modules.inference.preprocessing.cv2.VideoCapture",
+            return_value=capture,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"network video source .* after 3 consecutive attempts \(2 retries\)",
+            ):
+                list(
+                    Preprocessing(
+                        "rtsp://camera.example/live",
+                        drop_rate=1,
+                        network_read_retries=2,
+                    ).capture_video()
+                )
+
+        self.assertEqual(capture.read_count, 3)
+        self.assertTrue(capture.released)
+
+    def test_invalid_network_retry_budget_is_rejected_before_opening_source(self):
+        for invalid in (-1, 1.5, True):
+            with self.subTest(invalid=invalid), patch(
+                "detector_service.modules.inference.preprocessing.cv2.VideoCapture"
+            ) as constructor:
+                with self.assertRaisesRegex(ValueError, "non-negative integer"):
+                    list(
+                        Preprocessing(
+                            "udp://127.0.0.1:23000",
+                            network_read_retries=invalid,
+                        ).capture_video()
+                    )
+                constructor.assert_not_called()
 
 
 class DetectorTests(unittest.TestCase):
@@ -294,13 +357,23 @@ class DetectorTests(unittest.TestCase):
         self.assertIs(outputs, self.network.outputs)
         self.assertEqual((self.detector.img_height, self.detector.img_width), (120, 200))
 
-    def test_predict_falls_back_to_default_forward_when_layers_cannot_be_resolved(self):
-        self.network.layer_discovery_error = RuntimeError("unsupported backend")
+    def test_predict_falls_back_when_opencv_cannot_resolve_output_layers(self):
+        opencv_error = type("OpenCVError", (Exception,), {})
+        self.network.layer_discovery_error = opencv_error("unsupported backend")
 
-        outputs = self.detector.predict(np.ones((8, 10, 3), dtype=np.uint8))
+        with patch.object(model_module, "OPENCV_ERRORS", (opencv_error,)):
+            outputs = self.detector.predict(np.ones((8, 10, 3), dtype=np.uint8))
 
         self.assertEqual(self.network.forward_calls, [()])
         self.assertIs(outputs, self.network.outputs)
+
+    def test_predict_does_not_hide_unexpected_output_layer_errors(self):
+        self.network.layer_discovery_error = RuntimeError("invalid network state")
+
+        with self.assertRaisesRegex(RuntimeError, "invalid network state"):
+            self.detector.predict(np.ones((8, 10, 3), dtype=np.uint8))
+
+        self.assertEqual(self.network.forward_calls, [])
 
     def test_predict_ignores_invalid_output_layer_indices(self):
         self.network.unconnected_layers = np.asarray([[0], [8]])
@@ -316,6 +389,43 @@ class DetectorTests(unittest.TestCase):
             self.detector.predict(np.empty((0, 4, 3), dtype=np.uint8))
 
         self.dnn.blobFromImage.assert_not_called()
+
+    def test_constructor_rejects_invalid_score_thresholds_before_loading_model(self):
+        self.dnn.readNet.reset_mock()
+
+        for invalid in (-0.01, 1.01, float("nan"), float("inf"), "invalid"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                ValueError,
+                "score_threshold",
+            ):
+                Detector(
+                    "detector.weights",
+                    "detector.cfg",
+                    str(self.class_path),
+                    score_threshold=invalid,
+                )
+
+        self.dnn.readNet.assert_not_called()
+
+    def test_constructor_rejects_empty_and_duplicate_class_names(self):
+        self.dnn.readNet.reset_mock()
+        invalid_vocabularies = (
+            ("", "at least one class name"),
+            ("pallet\n\nworker\n", "empty class names on line\\(s\\): 2"),
+            ("pallet\nworker\npallet\n", "duplicate class names: 'pallet'"),
+        )
+
+        for vocabulary, expected_message in invalid_vocabularies:
+            with self.subTest(vocabulary=vocabulary):
+                self.class_path.write_text(vocabulary, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, expected_message):
+                    Detector(
+                        "detector.weights",
+                        "detector.cfg",
+                        str(self.class_path),
+                    )
+
+        self.dnn.readNet.assert_not_called()
 
     def test_post_process_filters_objectness_and_decodes_pixel_boxes(self):
         self.detector.img_width = 200
@@ -391,22 +501,40 @@ class InferenceServiceTests(unittest.TestCase):
 
         self.assertEqual(processed, 1)
         self.assertTrue(stream.iterator.closed)
-        self.assertIn("[FRAME] index=0 detections=1", output.getvalue())
+        self.assertIn("[FRAME] sampled_index=0 detections=1", output.getvalue())
+        self.assertIn("[DETECTION] sampled_index=0", output.getvalue())
         self.assertIn("combined_confidence=0.6000", output.getvalue())
-        self.assertIn("Inference completed. Processed 1 frames", output.getvalue())
-        self.assertEqual(self.put_text_mock.call_args.args[1], "pallet: 0.60")
+        self.assertIn(
+            "Inference completed. Processed 1 sampled frames",
+            output.getvalue(),
+        )
+        self.rectangle_mock.assert_not_called()
+        self.put_text_mock.assert_not_called()
         self.imwrite_mock.assert_not_called()
+
+    def test_no_save_skips_annotation_and_encoder_work(self):
+        service, _ = self._service()
+
+        with patch.object(service, "draw_boxes") as draw_boxes, patch.object(
+            service,
+            "save_frame",
+        ) as save_frame, contextlib.redirect_stdout(io.StringIO()):
+            service.run()
+
+        draw_boxes.assert_not_called()
+        save_frame.assert_not_called()
 
     def test_run_annotates_a_copy_of_the_stream_frame(self):
         detector = _ServiceDetectorDouble()
-        service, _ = self._service(detector=detector)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, _ = self._service(save_dir=temp_dir, detector=detector)
 
-        with patch.object(
-            service,
-            "draw_boxes",
-            side_effect=lambda frame, *args: frame,
-        ) as draw_boxes, contextlib.redirect_stdout(io.StringIO()):
-            service.run()
+            with patch.object(
+                service,
+                "draw_boxes",
+                side_effect=lambda frame, *args: frame,
+            ) as draw_boxes, contextlib.redirect_stdout(io.StringIO()):
+                service.run()
 
         source_frame = detector.predict_calls[0]
         annotation_frame = draw_boxes.call_args.args[0]
@@ -447,9 +575,9 @@ class InferenceServiceTests(unittest.TestCase):
             service, _ = self._service(save_dir=temp_dir)
             frame = np.zeros((4, 4, 3), dtype=np.uint8)
 
-            path = service.save_frame(frame, frame_number=27)
+            path = service.save_frame(frame, sample_index=27)
 
-        self.assertEqual(path.name, "frame_000027.jpg")
+        self.assertEqual(path.name, "sampled_frame_000027.jpg")
         self.imwrite_mock.assert_called_once_with(str(path), frame)
 
     def test_constructor_creates_nested_output_directory(self):
@@ -461,15 +589,44 @@ class InferenceServiceTests(unittest.TestCase):
             self.assertEqual(service.save_dir, output_dir)
             self.assertTrue(output_dir.is_dir())
 
+    def test_constructor_accepts_an_existing_empty_output_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "detections"
+            output_dir.mkdir()
+
+            service, _ = self._service(save_dir=output_dir)
+
+            self.assertEqual(service.save_dir, output_dir)
+
+    def test_constructor_rejects_a_nonempty_output_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / "detections"
+            output_dir.mkdir()
+            (output_dir / "previous-run.jpg").write_bytes(b"existing")
+
+            with self.assertRaisesRegex(
+                FileExistsError,
+                "must be empty.*different runs",
+            ):
+                self._service(save_dir=output_dir)
+
+    def test_constructor_rejects_a_file_as_the_output_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "detections"
+            output_path.write_bytes(b"not a directory")
+
+            with self.assertRaisesRegex(NotADirectoryError, "not a directory"):
+                self._service(save_dir=output_path)
+
     def test_save_frame_raises_when_encoder_reports_failure(self):
         self.imwrite_mock.return_value = False
         with tempfile.TemporaryDirectory() as temp_dir:
             service, _ = self._service(save_dir=temp_dir)
 
-            with self.assertRaisesRegex(OSError, "frame_000004.jpg"):
+            with self.assertRaisesRegex(OSError, "sampled_frame_000004.jpg"):
                 service.save_frame(
                     np.zeros((4, 4, 3), dtype=np.uint8),
-                    frame_number=4,
+                    sample_index=4,
                 )
 
     def test_frame_limit_stops_and_closes_longer_stream(self):
@@ -481,8 +638,8 @@ class InferenceServiceTests(unittest.TestCase):
 
         self.assertEqual(processed, 2)
         self.assertTrue(stream.iterator.closed)
-        self.assertIn("Reached configured frame limit: 2", output.getvalue())
-        self.assertNotIn("[FRAME] index=2", output.getvalue())
+        self.assertIn("Reached configured sampled-frame limit: 2", output.getvalue())
+        self.assertNotIn("[FRAME] sampled_index=2", output.getvalue())
 
     def test_keyboard_interrupt_is_reported_and_stream_is_closed(self):
         detector = _ServiceDetectorDouble(interrupt=True)
@@ -495,7 +652,7 @@ class InferenceServiceTests(unittest.TestCase):
         self.assertEqual(processed, 0)
         self.assertTrue(stream.iterator.closed)
         self.assertIn("Inference interrupted by user", output.getvalue())
-        self.assertIn("Processed 0 frames", output.getvalue())
+        self.assertIn("Processed 0 sampled frames", output.getvalue())
 
     def test_non_interrupt_exception_propagates_after_stream_cleanup(self):
         detector = _ServiceDetectorDouble(error=RuntimeError("inference failed"))

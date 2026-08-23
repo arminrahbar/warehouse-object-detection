@@ -1,4 +1,4 @@
-"""Command-line UDP video inference service."""
+"""Command-line video object-detection service."""
 
 from argparse import ArgumentParser, ArgumentTypeError
 from pathlib import Path
@@ -46,7 +46,18 @@ class InferenceService:
         self.max_frames = max_frames
 
         if self.save_dir:
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+            if self.save_dir.exists():
+                if not self.save_dir.is_dir():
+                    raise NotADirectoryError(
+                        f"Save destination is not a directory: {self.save_dir}"
+                    )
+                if any(self.save_dir.iterdir()):
+                    raise FileExistsError(
+                        "Save directory must be empty to prevent outputs from "
+                        f"different runs being mixed: {self.save_dir}"
+                    )
+            else:
+                self.save_dir.mkdir(parents=True)
 
     def _class_name(self, class_id: int) -> str:
         if 0 <= class_id < len(self.detector.classes):
@@ -79,26 +90,26 @@ class InferenceService:
             )
         return frame
 
-    def save_frame(self, frame, frame_number: int) -> Path | None:
-        """Write one numbered JPEG, or return immediately when saving is off."""
+    def save_frame(self, frame, sample_index: int) -> Path | None:
+        """Write one sample-indexed JPEG, or return when saving is disabled."""
         if self.save_dir is None:
             return None
 
-        destination = self.save_dir / f"frame_{frame_number:06d}.jpg"
+        destination = self.save_dir / f"sampled_frame_{sample_index:06d}.jpg"
         if not cv2.imwrite(str(destination), frame):
             raise OSError(f"Unable to write annotated frame: {destination}")
         return destination
 
     @staticmethod
-    def _report_frame(frame_number, bboxes, class_ids, confidences) -> None:
-        print(f"[FRAME] index={frame_number} detections={len(bboxes)}")
+    def _report_frame(sample_index, bboxes, class_ids, confidences) -> None:
+        print(f"[FRAME] sampled_index={sample_index} detections={len(bboxes)}")
         for bbox, class_id, confidence in zip(
             bboxes,
             class_ids,
             confidences,
         ):
             print(
-                f"[DETECTION] frame={frame_number} bbox={bbox} "
+                f"[DETECTION] sampled_index={sample_index} bbox={bbox} "
                 f"class_id={class_id} "
                 f"combined_confidence={confidence:.4f}"
             )
@@ -109,7 +120,7 @@ class InferenceService:
         frame_stream = self.stream.capture_video()
 
         try:
-            for frame_number, frame in enumerate(frame_stream):
+            for sample_index, frame in enumerate(frame_stream):
                 raw_outputs = self.detector.predict(frame)
                 candidates = self.detector.post_process(raw_outputs)
                 retained = self.nms.filter(*candidates)
@@ -120,18 +131,19 @@ class InferenceService:
                 )
 
                 self._report_frame(
-                    frame_number,
+                    sample_index,
                     retained[0],
                     retained[1],
                     confidences,
                 )
-                annotated = self.draw_boxes(
-                    frame.copy(),
-                    retained[0],
-                    retained[1],
-                    confidences,
-                )
-                self.save_frame(annotated, frame_number)
+                if self.save_dir is not None:
+                    annotated = self.draw_boxes(
+                        frame.copy(),
+                        retained[0],
+                        retained[1],
+                        confidences,
+                    )
+                    self.save_frame(annotated, sample_index)
                 processed_frames += 1
 
                 if (
@@ -139,7 +151,7 @@ class InferenceService:
                     and processed_frames >= self.max_frames
                 ):
                     print(
-                        "[INFO] Reached configured frame limit: "
+                        "[INFO] Reached configured sampled-frame limit: "
                         f"{self.max_frames}."
                     )
                     break
@@ -150,7 +162,10 @@ class InferenceService:
             if close is not None:
                 close()
 
-        print(f"[INFO] Inference completed. Processed {processed_frames} frames.")
+        print(
+            "[INFO] Inference completed. Processed "
+            f"{processed_frames} sampled frames."
+        )
         return processed_frames
 
 
@@ -160,7 +175,10 @@ def build_parser() -> ArgumentParser:
     parser.add_argument(
         "--source",
         default="udp://127.0.0.1:23000",
-        help="Video file or network-stream URL understood by OpenCV.",
+        help=(
+            "Finite video file/HTTP URL or live RTMP, RTSP, TCP, or UDP stream "
+            "understood by OpenCV."
+        ),
     )
     parser.add_argument(
         "--weights",
@@ -211,7 +229,7 @@ def build_parser() -> ArgumentParser:
         "--save-dir",
         type=Path,
         default=SERVICE_DIR / "storage" / "detections",
-        help="Directory for annotated frames.",
+        help="New or empty directory for annotated sampled frames.",
     )
     parser.add_argument(
         "--no-save",

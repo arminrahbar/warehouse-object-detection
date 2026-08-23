@@ -114,6 +114,43 @@ class RobustnessFixture(unittest.TestCase):
         self.classes = ["alpha", "beta"]
         self.class_file = self.root / "classes.names"
         self.class_file.write_text("alpha\nbeta\n", encoding="utf-8")
+        self.selection = {
+            "selection_directory": self.root / "selection",
+            "selection_run_id": "selection-test-v1",
+            "selection_manifest_sha256": "a" * 64,
+            "decision_sha256": "b" * 64,
+            "selected_checkpoint": "Checkpoint B",
+            "selected_model": robustness.MODEL_NAME,
+            "model_identity": {
+                "weights": "c" * 64,
+                "cfg": "d" * 64,
+                "names": robustness.sha256_file(self.class_file),
+            },
+            "asset_paths": {
+                "weights": "weights.bin",
+                "config": "model.cfg",
+                "classes": "classes.names",
+            },
+        }
+        self.operating_point = {
+            "selected_model": robustness.MODEL_NAME,
+            "selected_nms_iou_threshold": robustness.NMS_IOU_THRESHOLD,
+            "sha256": "e" * 64,
+        }
+        selection_patch = patch.object(
+            robustness,
+            "load_verified_checkpoint_selection",
+            return_value=self.selection,
+        )
+        operating_patch = patch.object(
+            robustness,
+            "load_verified_operating_point",
+            return_value=self.operating_point,
+        )
+        selection_patch.start()
+        operating_patch.start()
+        self.addCleanup(selection_patch.stop)
+        self.addCleanup(operating_patch.stop)
         self.index = pd.DataFrame(
             [
                 {
@@ -196,14 +233,114 @@ class RobustnessFixture(unittest.TestCase):
             "class_scores_json": json.dumps(vector),
         }
 
+    def ledger(self, condition):
+        raw_counts = self.raw(condition).groupby("image_file").size()
+        return pd.DataFrame(
+            [
+                {
+                    "model": robustness.MODEL_NAME,
+                    "dataset": robustness.DATASET_NAME,
+                    "augmentation_condition": condition["tag"],
+                    "image_file": row.image_file,
+                    "image_path": row.image_path,
+                    "status": "processed",
+                    "candidate_count": int(raw_counts.get(row.image_file, 0)),
+                }
+                for row in self.index.itertuples(index=False)
+            ],
+            columns=robustness.LEDGER_COLUMNS,
+        )
+
     def write_all_input_caches(self):
         for condition in robustness.CONDITIONS:
             paths = robustness._cache_paths(self.cache_dir, condition, "sample5000")
             self.ground_truth(condition).to_csv(paths["ground_truth"], index=False)
             self.raw(condition).to_csv(paths["raw"], index=False)
+            self.ledger(condition).to_csv(paths["ledger"], index=False)
+        robustness.write_condition_cache_manifest(
+            self.cache_dir,
+            self.index,
+            self.index_path,
+            self.selection,
+            self.operating_point,
+            self.classes,
+            "sample5000",
+        )
+
+    def derived_tables(self):
+        summary_rows = []
+        class_rows = []
+        for position, condition in enumerate(robustness.CONDITIONS):
+            score = 0.8 - position * 0.1
+            summary_rows.append(
+                {
+                    "model": robustness.MODEL_NAME,
+                    "dataset": robustness.DATASET_NAME,
+                    "augmentation_condition": condition["tag"],
+                    "augmentation_display": condition["display"],
+                    "mAP@0.5_11_point": score,
+                    "total_ground_truth": 2,
+                    "total_predictions_after_nms": 4,
+                    "evaluation_rows": 4,
+                    "candidate_objectness_threshold": 0.5,
+                    "nms_confidence_threshold": 0.5,
+                    "nms_iou_threshold": 0.3,
+                    "map_iou_threshold": 0.5,
+                    "eval_type": "combined",
+                    "mAP_change_vs_original": score - 0.8,
+                    "mAP_percent_change_vs_original": (score - 0.8) / 0.8 * 100,
+                    "prediction_change_vs_original": 0,
+                }
+            )
+            for class_id, class_name in enumerate(self.classes):
+                class_rows.append(
+                    {
+                        "model": robustness.MODEL_NAME,
+                        "dataset": robustness.DATASET_NAME,
+                        "augmentation_condition": condition["tag"],
+                        "augmentation_display": condition["display"],
+                        "class_id": class_id,
+                        "class_name": class_name,
+                        "ground_truth_count": 1,
+                        "prediction_count": 1,
+                        "ap_11_point": score,
+                        "original_ap_11_point": 0.8,
+                        "ap_change_vs_original": score - 0.8,
+                    }
+                )
+        return pd.DataFrame(summary_rows), pd.DataFrame(class_rows)
 
 
 class ContractTests(RobustnessFixture):
+    def test_default_paths_follow_numbered_experiment_layout(self):
+        output_root = PROJECT_ROOT / "experiments" / "outputs"
+        sample_path = (
+            output_root
+            / "02_dataset_analysis"
+            / "02_sample_selection"
+            / "selected_sample_index.csv"
+        )
+        self.assertEqual(demo.DEFAULT_SAMPLE_INDEX, sample_path)
+        self.assertEqual(robustness.DEFAULT_SAMPLE_INDEX, sample_path)
+        self.assertEqual(
+            robustness.DEFAULT_OUTPUT_DIR,
+            output_root
+            / "04_augmentation_robustness"
+            / "01_condition_evaluation",
+        )
+        diagnostic_dir = (
+            PROJECT_ROOT
+            / "scratch"
+            / "diagnostic-figures"
+            / "04_augmentation_robustness"
+        )
+        self.assertEqual(demo.DEFAULT_FIGURE_DIR, diagnostic_dir)
+        self.assertEqual(
+            demo.DEFAULT_OUTPUT,
+            diagnostic_dir / "01_augmentation_examples.png",
+        )
+        self.assertEqual(robustness.DEFAULT_FIGURE_DIR, diagnostic_dir)
+
     def test_conditions_and_operating_policy_are_explicit(self):
         self.assertEqual(
             [condition["tag"] for condition in robustness.CONDITIONS],
@@ -251,6 +388,10 @@ class ContractTests(RobustnessFixture):
         )
         self.assertEqual(paths["ground_truth"].name, "ground_truth_vertical_flip_first_10.csv")
         self.assertEqual(paths["raw"].name, "model2_raw_predictions_vertical_flip_first_10.csv")
+        self.assertEqual(
+            paths["ledger"].name,
+            "model2_inference_ledger_vertical_flip_first_10.csv",
+        )
         self.assertIn("class_aware_nms_0_3", paths["predictions"].name)
 
 
@@ -470,12 +611,84 @@ class CacheValidationTests(RobustnessFixture):
         with self.assertRaisesRegex(ValueError, "maximum class score"):
             robustness.validate_raw_predictions(invalid, self.index, self.classes, condition)
 
-    def test_class_mapping_can_be_recovered_from_consistent_caches(self):
-        condition = robustness._condition("original")
-        path = self.root / "ground_truth.csv"
-        self.ground_truth(condition).to_csv(path, index=False)
-        classes = robustness.load_classes(self.root / "missing.names", [path])
+    def test_class_vocabulary_must_come_from_verified_complete_names_file(self):
+        classes = robustness.load_classes(
+            self.class_file,
+            self.selection["model_identity"]["names"],
+        )
         self.assertEqual(classes, self.classes)
+        with self.assertRaisesRegex(FileNotFoundError, "class-name file is required"):
+            robustness.load_classes(
+                self.root / "missing.names",
+                self.selection["model_identity"]["names"],
+            )
+        alternate = self.root / "truncated.names"
+        alternate.write_text("alpha\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "does not match",
+        ):
+            robustness.load_classes(
+                alternate,
+                self.selection["model_identity"]["names"],
+            )
+
+    def test_cache_paths_must_match_selected_index_image_identity(self):
+        condition = robustness._condition("original")
+        for validator, table in (
+            (robustness.validate_ground_truth, self.ground_truth(condition)),
+            (robustness.validate_raw_predictions, self.raw(condition)),
+        ):
+            with self.subTest(validator=validator.__name__):
+                invalid = table.copy()
+                invalid.loc[0, "image_path"] = (
+                    "detector_service/storage/images/unrelated.jpg"
+                )
+                with self.assertRaisesRegex(
+                    robustness.EvidenceContractError,
+                    "does not match selected-index identity",
+                ):
+                    validator(
+                        invalid,
+                        self.index,
+                        self.classes,
+                        condition,
+                    )
+
+        raw = self.raw(condition)
+        ledger = self.ledger(condition)
+        ledger.loc[0, "image_path"] = "images/unrelated.jpg"
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "does not match selected-index identity",
+        ):
+            robustness.validate_inference_ledger(
+                ledger,
+                self.index,
+                raw,
+                condition,
+            )
+
+    def test_legacy_and_canonical_storage_prefixes_are_equivalent(self):
+        condition = robustness._condition("original")
+        ground_truth = robustness.validate_ground_truth(
+            self.ground_truth(condition),
+            self.index,
+            self.classes,
+            condition,
+        )
+        raw = robustness.validate_raw_predictions(
+            self.raw(condition),
+            self.index,
+            self.classes,
+            condition,
+        )
+        self.assertTrue(
+            ground_truth["image_path"].str.startswith("detector_service/storage/").all()
+        )
+        self.assertTrue(
+            raw["image_path"].str.startswith("detector_service/storage/").all()
+        )
 
     def test_external_cache_paths_are_read_only_under_main(self):
         self.write_all_input_caches()
@@ -512,6 +725,70 @@ class CacheValidationTests(RobustnessFixture):
                     "--skip-figures",
                 ]
             )
+
+    def test_cache_input_and_output_must_not_overlap_in_either_direction(self):
+        cases = (
+            (self.root / "shared", self.root / "shared"),
+            (self.root / "shared", self.root / "shared" / "output"),
+            (self.root / "shared" / "cache", self.root / "shared"),
+        )
+        for cache_dir, output_dir in cases:
+            with self.subTest(cache=cache_dir, output=output_dir), self.assertRaisesRegex(
+                ValueError,
+                "must be disjoint",
+            ):
+                robustness.main(
+                    [
+                        "--sample-index",
+                        str(self.index_path),
+                        "--class-file",
+                        str(self.class_file),
+                        "--cache-input-dir",
+                        str(cache_dir),
+                        "--output-dir",
+                        str(output_dir),
+                        "--skip-figures",
+                    ]
+                )
+
+    def test_full_cache_replay_requires_manifest_and_rejects_tampering(self):
+        self.write_all_input_caches()
+        manifest = robustness._manifest_path(self.cache_dir, "sample5000")
+        manifest.unlink()
+        arguments = [
+            "--sample-index",
+            str(self.index_path),
+            "--class-file",
+            str(self.class_file),
+            "--cache-input-dir",
+            str(self.cache_dir),
+            "--output-dir",
+            str(self.output_dir),
+            "--skip-figures",
+        ]
+        with self.assertRaisesRegex(FileNotFoundError, "requires a complete"):
+            robustness.main(arguments)
+
+        robustness.write_condition_cache_manifest(
+            self.cache_dir,
+            self.index,
+            self.index_path,
+            self.selection,
+            self.operating_point,
+            self.classes,
+            "sample5000",
+        )
+        raw_path = robustness._cache_paths(
+            self.cache_dir,
+            robustness._condition("original"),
+            "sample5000",
+        )["raw"]
+        raw_path.write_bytes(raw_path.read_bytes() + b"\n")
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "identity mismatch",
+        ):
+            robustness.main(arguments)
 
 
 class PostprocessingTests(RobustnessFixture):
@@ -637,7 +914,7 @@ class ArtifactTests(RobustnessFixture):
         self.assertTrue(all(path.is_file() for path in paths["predictions"]))
         self.assertTrue(all(path.is_file() for path in paths["derived"].values()))
 
-    def test_cached_prediction_is_reused_unless_refresh_is_requested(self):
+    def test_cached_prediction_is_verified_and_refresh_can_rebuild_it(self):
         self.write_all_input_caches()
         arguments = [
             "--sample-index",
@@ -650,12 +927,21 @@ class ArtifactTests(RobustnessFixture):
             str(self.output_dir),
             "--skip-figures",
         ]
-        robustness.main(arguments)
-        with patch.object(robustness, "apply_fixed_nms", wraps=robustness.apply_fixed_nms) as apply:
+        _, _, paths, _ = robustness.main(arguments)
+        cached_path = paths["predictions"][0]
+        tampered = pd.read_csv(cached_path)
+        tampered.loc[0, "bbox_x"] = float(tampered.loc[0, "bbox_x"]) + 0.25
+        tampered.to_csv(cached_path, index=False)
+
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "does not match recomputation",
+        ):
             robustness.main(arguments)
-            apply.assert_not_called()
-            robustness.main([*arguments, "--refresh-postprocessing"])
-            self.assertEqual(apply.call_count, len(robustness.CONDITIONS))
+
+        robustness.main([*arguments, "--refresh-postprocessing"])
+        repaired = pd.read_csv(cached_path)
+        self.assertNotEqual(float(repaired.loc[0, "bbox_x"]), float(tampered.loc[0, "bbox_x"]))
 
     def test_figure_builder_emits_four_canonical_names(self):
         summaries = []
@@ -704,8 +990,7 @@ class ArtifactTests(RobustnessFixture):
         self.assertTrue(all(path.read_bytes() == b"figure" for path in paths))
 
     def test_figures_only_uses_existing_derived_artifacts(self):
-        summary = pd.DataFrame(columns=robustness.SUMMARY_COLUMNS)
-        per_class = pd.DataFrame(columns=robustness.PER_CLASS_COLUMNS)
+        summary, per_class = self.derived_tables()
         self.output_dir.mkdir()
         summary.to_csv(self.output_dir / "summary_by_condition_sample5000.csv", index=False)
         per_class.to_csv(
@@ -725,6 +1010,72 @@ class ArtifactTests(RobustnessFixture):
             )
         self.assertEqual(result[3], expected)
         build.assert_called_once()
+
+    def test_figures_only_rejects_partial_or_policy_mixed_evidence(self):
+        summary, per_class = self.derived_tables()
+        self.output_dir.mkdir()
+        summary.iloc[:-1].to_csv(
+            self.output_dir / "summary_by_condition_sample5000.csv",
+            index=False,
+        )
+        per_class.to_csv(
+            self.output_dir / "per_class_ap_by_condition_sample5000.csv",
+            index=False,
+        )
+        arguments = [
+            "--output-dir",
+            str(self.output_dir),
+            "--figure-dir",
+            str(self.figure_dir),
+            "--figures-only",
+        ]
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "exact condition set",
+        ):
+            robustness.main(arguments)
+
+        summary.loc[:, "nms_iou_threshold"] = [0.3, 0.3, 0.4, 0.3, 0.3]
+        summary.to_csv(
+            self.output_dir / "summary_by_condition_sample5000.csv",
+            index=False,
+        )
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "fixed policy",
+        ):
+            robustness.main(arguments)
+
+    def test_figures_only_rejects_incomplete_per_class_vocabulary(self):
+        summary, per_class = self.derived_tables()
+        self.output_dir.mkdir()
+        summary.to_csv(
+            self.output_dir / "summary_by_condition_sample5000.csv",
+            index=False,
+        )
+        invalid = per_class[
+            ~(
+                (per_class["augmentation_condition"] == "vertical_flip")
+                & (per_class["class_id"] == 1)
+            )
+        ]
+        invalid.to_csv(
+            self.output_dir / "per_class_ap_by_condition_sample5000.csv",
+            index=False,
+        )
+        with self.assertRaisesRegex(
+            robustness.EvidenceContractError,
+            "vocabulary is incomplete",
+        ):
+            robustness.main(
+                [
+                    "--output-dir",
+                    str(self.output_dir),
+                    "--figure-dir",
+                    str(self.figure_dir),
+                    "--figures-only",
+                ]
+            )
 
 
 class ReferenceCompatibilityTests(RobustnessFixture):

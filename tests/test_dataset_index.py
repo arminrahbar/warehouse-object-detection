@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "02_build_dataset_index.py"
+SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "00_build_dataset_inventory.py"
 
 spec = importlib.util.spec_from_file_location("dataset_index_under_test", SCRIPT_PATH)
 dataset_index = importlib.util.module_from_spec(spec)
@@ -49,7 +49,7 @@ class DatasetFixture(unittest.TestCase):
         label_path.write_text(labels, encoding="utf-8")
         return image_path, label_path
 
-    def build(self, strict=False):
+    def build(self, strict=True):
         return dataset_index.build_dataset_index(
             dataset_dir=self.dataset_dir,
             classes_path=self.classes_path,
@@ -86,12 +86,10 @@ class DatasetIndexContractTests(DatasetFixture):
         self.assertEqual(dataset_index.clean_column_name(" Safety Vest "), "safety_vest")
         self.assertEqual(dataset_index.clean_column_name("fork-lift/cart"), "fork_lift_cart")
 
-    def test_class_loader_ignores_blank_lines(self):
+    def test_class_loader_rejects_blank_lines_that_would_renumber_ids(self):
         self.classes_path.write_text(" pallet \n\nworker\n", encoding="utf-8")
-        self.assertEqual(
-            dataset_index.load_classes(self.classes_path),
-            ["pallet", "worker"],
-        )
+        with self.assertRaisesRegex(ValueError, "blank entries.*lines: 2"):
+            dataset_index.load_classes(self.classes_path)
 
     def test_empty_class_file_is_rejected(self):
         self.classes_path.write_text("\n  \n", encoding="utf-8")
@@ -111,6 +109,10 @@ class DatasetIndexContractTests(DatasetFixture):
         self.assertEqual(
             dataset_index.DEFAULT_CLASSES_RELATIVE.as_posix(),
             "detector_service/storage/yolo_model_1/logistics.names",
+        )
+        self.assertEqual(
+            dataset_index.DEFAULT_OUTPUT_DIR,
+            PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory",
         )
 
     def test_portable_path_does_not_dereference_storage_symlink(self):
@@ -134,6 +136,11 @@ class DatasetIndexContractTests(DatasetFixture):
 
         self.assertEqual(serialized, "detector_service/storage/frame.jpg")
 
+    def test_portable_path_rejects_assets_outside_declared_root(self):
+        outside = self.root.parent / "outside-frame.jpg"
+        with self.assertRaisesRegex(ValueError, "outside the declared asset root"):
+            dataset_index._portable_path(outside, self.root)
+
 
 class LabelParsingTests(DatasetFixture):
     def test_valid_yolo_rows_are_counted_by_class(self):
@@ -142,7 +149,7 @@ class LabelParsingTests(DatasetFixture):
             "0 0.5 0.5 0.2 0.4\n1 0.2 0.3 0.1 0.1\n1 1 0 1 1\n",
         )
 
-        counts, errors = dataset_index.parse_label_file(label_path, 3)
+        counts, errors = dataset_index.parse_label_file(label_path, 3, strict=False)
 
         self.assertEqual(counts, {0: 1, 1: 2})
         self.assertEqual(errors, [])
@@ -159,10 +166,14 @@ class LabelParsingTests(DatasetFixture):
             "2 0.5 0.5 0.2 0.2 extra\n",
         )
 
-        counts, errors = dataset_index.parse_label_file(label_path, 3)
+        counts, errors = dataset_index.parse_label_file(
+            label_path,
+            3,
+            strict=False,
+        )
 
-        self.assertEqual(counts, {2: 1})
-        self.assertEqual(len(errors), 6)
+        self.assertEqual(counts, {})
+        self.assertEqual(len(errors), 7)
         self.assertTrue(all("frame.txt:" in message for message in errors))
 
     def test_strict_parsing_fails_at_first_invalid_row(self):
@@ -188,7 +199,7 @@ class ArtifactConstructionTests(DatasetFixture):
         (self.dataset_dir / "c.jpg").write_bytes(b"missing-label")
         self.write_pair("ignored", "0 0.5 0.5 0.2 0.2\n", image_suffix=".png")
 
-        result = self.build()
+        result = self.build(strict=False)
 
         self.assertEqual(result.images_discovered, 3)
         self.assertEqual(result.images_indexed, 2)
@@ -257,7 +268,7 @@ class ArtifactConstructionTests(DatasetFixture):
             "0 0.5 0.5 0.2 0.2\ninvalid row\n2 0.5 0.5 0.2 0.2\n",
         )
 
-        result = self.build()
+        result = self.build(strict=False)
 
         self.assertEqual(result.invalid_annotations, 1)
         self.assertEqual(result.total_objects, 2)
@@ -270,7 +281,14 @@ class ArtifactConstructionTests(DatasetFixture):
     def test_no_image_label_pairs_is_rejected(self):
         (self.dataset_dir / "frame.jpg").write_bytes(b"missing-label")
         with self.assertRaisesRegex(RuntimeError, "No image-label pairs"):
-            self.build()
+            self.build(strict=False)
+
+    def test_strict_validation_is_the_cli_default(self):
+        defaults = dataset_index.build_parser().parse_args([])
+        diagnostic = dataset_index.build_parser().parse_args(["--allow-invalid"])
+
+        self.assertFalse(defaults.allow_invalid)
+        self.assertTrue(diagnostic.allow_invalid)
 
     def test_repeated_build_is_byte_for_byte_deterministic(self):
         self.write_pair("b", "1 0.5 0.5 0.2 0.2\n")
@@ -335,6 +353,7 @@ class ReferenceCompatibilityTests(DatasetFixture):
             classes_path=self.classes_path,
             output_dir=new_output,
             asset_root=self.root,
+            strict=False,
         )
 
         reference_spec = importlib.util.spec_from_file_location(

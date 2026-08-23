@@ -37,6 +37,26 @@ class SweepFixture(unittest.TestCase):
         self.classes = ["alpha", "beta", "gamma"]
         self.class_file = self.root / "classes.names"
         self.class_file.write_text("\n".join(self.classes), encoding="utf-8")
+        self.selection_run = self.root / "custom-selection-run"
+        self.selection_run.mkdir()
+        self.selection = {
+            "selection_directory": self.selection_run,
+            "selection_run_id": self.selection_run.name,
+            "selection_manifest_sha256": "3" * 64,
+            "decision_sha256": "4" * 64,
+            "selected_checkpoint": "B",
+            "selected_model": sweep.MODEL_NAME,
+            "model_identity": {
+                "weights": "1" * 64,
+                "cfg": "2" * 64,
+                "names": sweep.sha256_file(self.class_file),
+            },
+            "asset_paths": {
+                "weights": "yolo_model_2/custom.weights",
+                "config": "yolo_model_2/custom.cfg",
+                "classes": "yolo_model_2/classes.names",
+            },
+        }
 
         self.index = pd.DataFrame(
             [
@@ -85,6 +105,72 @@ class SweepFixture(unittest.TestCase):
         )
         self.raw_path = self.root / "raw_predictions.csv"
         self.raw.to_csv(self.raw_path, index=False)
+        candidate_counts = self.raw.groupby("image_file").size()
+        self.ledger = pd.DataFrame(
+            [
+                {
+                    "model": sweep.MODEL_NAME,
+                    "image_file": row.image_file,
+                    "image_path": row.image_path,
+                    "status": "processed",
+                    "candidate_count": int(candidate_counts.get(row.image_file, 0)),
+                }
+                for row in self.index.itertuples(index=False)
+            ],
+            columns=sweep.LEDGER_COLUMNS,
+        )
+        self.ledger_path = self.root / "inference_ledger.csv"
+        self.ledger.to_csv(self.ledger_path, index=False)
+        self.cache_manifest_path = self.root / "inference_cache_manifest.json"
+        self.write_cache_manifest()
+
+    def write_cache_manifest(self, path=None):
+        destination = Path(path or self.cache_manifest_path)
+        payload = sweep.build_inference_cache_manifest(
+            sample_index_path=self.index_path,
+            index=self.index,
+            selection=self.selection,
+            classes=self.classes,
+            class_file=self.class_file,
+            model_name=sweep.MODEL_NAME,
+            run_label="sample5000",
+            artifact_paths={
+                "ground_truth": self.ground_truth_path,
+                "raw_predictions": self.raw_path,
+                "inference_ledger": self.ledger_path,
+            },
+            artifact_tables={
+                "ground_truth": self.ground_truth,
+                "raw_predictions": self.raw,
+                "inference_ledger": self.ledger,
+            },
+        )
+        destination.write_text(json.dumps(payload), encoding="utf-8")
+        return destination
+
+    def replay_arguments(self, output_dir=None):
+        return [
+            "--sample-index",
+            str(self.index_path),
+            "--overlap-profile",
+            str(self.overlap_path),
+            "--selection-run",
+            str(self.selection_run),
+            "--class-file",
+            str(self.class_file),
+            "--ground-truth-cache",
+            str(self.ground_truth_path),
+            "--raw-predictions-cache",
+            str(self.raw_path),
+            "--inference-ledger",
+            str(self.ledger_path),
+            "--inference-cache-manifest",
+            str(self.cache_manifest_path),
+            "--output-dir",
+            str(output_dir or self.output_dir),
+            "--skip-figures",
+            "--refresh-postprocessing",
+        ]
 
     def gt_row(self, image_file, class_id, box):
         return {
@@ -119,6 +205,34 @@ class SweepFixture(unittest.TestCase):
 
 
 class ContractTests(unittest.TestCase):
+    def test_default_paths_follow_numbered_experiment_layout(self):
+        output_root = PROJECT_ROOT / "experiments" / "outputs"
+        self.assertEqual(
+            sweep.DEFAULT_SAMPLE_INDEX,
+            output_root
+            / "02_dataset_analysis"
+            / "02_sample_selection"
+            / "selected_sample_index.csv",
+        )
+        self.assertEqual(
+            sweep.DEFAULT_OVERLAP_PROFILE,
+            output_root
+            / "02_dataset_analysis"
+            / "03_overlap_analysis"
+            / "overlap_profile.csv",
+        )
+        self.assertEqual(
+            sweep.DEFAULT_OUTPUT_DIR,
+            output_root / "03_nms_thresholding" / "01_threshold_sweep",
+        )
+        self.assertEqual(
+            sweep.DEFAULT_FIGURE_DIR,
+            PROJECT_ROOT
+            / "scratch"
+            / "diagnostic-figures"
+            / "03_nms_thresholding",
+        )
+
     def test_fixed_operating_policy_is_explicit(self):
         self.assertEqual(sweep.MODEL_NAME, "model2")
         self.assertEqual(sweep.SCORE_THRESHOLD, 0.5)
@@ -160,19 +274,23 @@ class InputValidationTests(SweepFixture):
         with self.assertRaisesRegex(ValueError, "duplicate image_file"):
             sweep.load_sample_index(self.index_path)
 
-    def test_classes_load_from_file_or_consistent_cache(self):
-        self.assertEqual(sweep.load_classes(self.class_file), self.classes)
+    def test_classes_require_a_hash_verified_full_vocabulary(self):
+        expected = sweep.sha256_file(self.class_file)
         self.assertEqual(
-            sweep.load_classes(self.root / "missing.names", (self.ground_truth_path, self.raw_path)),
+            sweep.load_classes(self.class_file, expected_sha256=expected),
             self.classes,
         )
 
-    def test_conflicting_cached_class_names_are_rejected(self):
-        broken = self.raw.copy()
-        broken.loc[0, "class_name"] = "different"
-        broken.to_csv(self.raw_path, index=False)
-        with self.assertRaisesRegex(ValueError, "Conflicting names"):
-            sweep.load_classes(self.root / "missing.names", (self.ground_truth_path, self.raw_path))
+        with self.assertRaisesRegex(FileNotFoundError, "trailing unseen classes"):
+            sweep.load_classes(
+                self.root / "missing.names",
+                expected_sha256=expected,
+            )
+
+        different = self.root / "different.names"
+        different.write_text("alpha\nbeta", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "selected checkpoint identity"):
+            sweep.load_classes(different, expected_sha256=expected)
 
     def test_ground_truth_must_reconcile_object_counts(self):
         broken = self.ground_truth.iloc[:-1].copy()
@@ -186,6 +304,23 @@ class InputValidationTests(SweepFixture):
         broken.loc[0, "combined_confidence"] = 0.1
         with self.assertRaisesRegex(ValueError, "does not equal"):
             sweep.validate_raw_predictions(broken, self.index, self.classes)
+
+    def test_raw_cache_requires_class_id_to_match_score_argmax(self):
+        broken = self.raw.copy()
+        vector = json.loads(broken.loc[0, "class_scores_json"])
+        vector[1] = 0.99
+        broken.loc[0, "class_scores_json"] = json.dumps(vector)
+        with self.assertRaisesRegex(ValueError, r"argmax\(class_scores_json\)"):
+            sweep.validate_raw_predictions(broken, self.index, self.classes)
+
+    def test_live_inference_never_uses_an_implicit_selection_run(self):
+        with self.assertRaisesRegex(ValueError, "selection_run is required"):
+            sweep.run_raw_inference(
+                self.index.iloc[0:0],
+                self.classes,
+                image_reader=Mock(),
+                detector_factory=Mock(),
+            )
 
     def test_raw_cache_rejects_invalid_json_and_vector_length(self):
         for value in ("not-json", json.dumps([1.0])):
@@ -212,6 +347,99 @@ class InputValidationTests(SweepFixture):
             "techtrack/storage/logistics/a.jpg",
         ):
             self.assertEqual(sweep.resolve_indexed_path(value, asset_root), expected)
+
+    def test_indexed_paths_reject_parent_traversal_and_external_absolute_paths(self):
+        asset_root = self.root / "assets"
+        asset_root.mkdir()
+        with self.assertRaisesRegex(ValueError, "parent traversal"):
+            sweep.resolve_indexed_path(
+                "detector_service/storage/../secret.txt",
+                asset_root,
+            )
+        with self.assertRaisesRegex(ValueError, "outside the permitted root"):
+            sweep.resolve_indexed_path(self.root / "outside.txt", asset_root)
+
+    def test_inference_ledger_proves_zero_candidate_images_were_processed(self):
+        validated = sweep.validate_inference_ledger(
+            self.ledger,
+            self.index,
+            self.raw,
+        )
+        self.assertEqual(len(validated), len(self.index))
+        self.assertEqual(
+            int(validated.loc[validated["image_file"] == "c.jpg", "candidate_count"].iloc[0]),
+            0,
+        )
+
+        incomplete = self.ledger.iloc[:-1]
+        with self.assertRaisesRegex(ValueError, "row count"):
+            sweep.validate_inference_ledger(incomplete, self.index, self.raw)
+
+    def test_legacy_storage_namespace_is_the_only_path_alias(self):
+        legacy_ground_truth = self.ground_truth.copy()
+        legacy_ground_truth["image_path"] = legacy_ground_truth["image_path"].str.replace(
+            "detector_service/storage/",
+            "techtrack/storage/",
+            regex=False,
+        )
+        sweep.validate_ground_truth(legacy_ground_truth, self.index, self.classes)
+
+        legacy_raw = self.raw.copy()
+        legacy_raw["image_path"] = legacy_raw["image_path"].str.replace(
+            "detector_service/storage/",
+            "techtrack/storage/",
+            regex=False,
+        )
+        sweep.validate_raw_predictions(legacy_raw, self.index, self.classes)
+
+        legacy_ledger = self.ledger.copy()
+        legacy_ledger["image_path"] = legacy_ledger["image_path"].str.replace(
+            "detector_service/storage/",
+            "techtrack/storage/",
+            regex=False,
+        )
+        sweep.validate_inference_ledger(
+            legacy_ledger,
+            self.index,
+            legacy_raw,
+        )
+
+        for label, table, validator in (
+            (
+                "ground truth",
+                self.ground_truth,
+                lambda value: sweep.validate_ground_truth(
+                    value,
+                    self.index,
+                    self.classes,
+                ),
+            ),
+            (
+                "raw predictions",
+                self.raw,
+                lambda value: sweep.validate_raw_predictions(
+                    value,
+                    self.index,
+                    self.classes,
+                ),
+            ),
+            (
+                "ledger",
+                self.ledger,
+                lambda value: sweep.validate_inference_ledger(
+                    value,
+                    self.index,
+                    self.raw,
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                broken = table.copy()
+                broken.loc[0, "image_path"] = (
+                    "detector_service/storage/unrelated/not-a.jpg"
+                )
+                with self.assertRaisesRegex(ValueError, "image_path"):
+                    validator(broken)
 
 
 class GroundTruthTests(SweepFixture):
@@ -336,28 +564,297 @@ class ArtifactTests(SweepFixture):
             assert_frame_equal(pd.read_csv(path), artifacts[name], check_dtype=False)
         self.assertEqual(list(self.output_dir.glob(".*.csv")), [])
 
+    def test_complete_derived_package_validates_before_figure_use(self):
+        artifacts = self.build()
+        validated = sweep.validate_derived_artifacts(artifacts, "sample5000")
+        self.assertEqual(set(validated), set(artifacts))
+
+    def test_derived_package_rejects_schema_policy_threshold_and_cross_table_tampering(self):
+        def clone(artifacts):
+            return {name: table.copy() for name, table in artifacts.items()}
+
+        valid = self.build()
+        summary_name = "nms_threshold_summary_sample5000.csv"
+        duplicate_name = "duplicate_summary_by_threshold_sample5000.csv"
+
+        schema = clone(valid)
+        schema[summary_name]["unexpected"] = 1
+
+        policy = clone(valid)
+        policy[summary_name].loc[0, "score_threshold"] = 0.25
+
+        threshold = clone(valid)
+        threshold[summary_name] = threshold[summary_name].iloc[:-1].copy()
+
+        cross_table = clone(valid)
+        cross_table[duplicate_name].loc[0, "total_predictions_after_nms"] += 1
+
+        for label, package, message in (
+            ("schema", schema, "schema mismatch"),
+            ("policy", policy, "policy does not match"),
+            ("threshold", threshold, "required rows"),
+            ("cross-table", cross_table, "do not reconcile"),
+        ):
+            with self.subTest(label=label), self.assertRaisesRegex(
+                ValueError,
+                message,
+            ):
+                sweep.validate_derived_artifacts(package, "sample5000")
+
+    def test_figures_only_rejects_invalid_derived_package_before_rendering(self):
+        artifacts = self.build()
+        sweep.write_sweep_artifacts(self.output_dir, artifacts)
+        summary_path = self.output_dir / "nms_threshold_summary_sample5000.csv"
+        summary = pd.read_csv(summary_path)
+        summary.loc[0, "score_threshold"] = 0.25
+        summary.to_csv(summary_path, index=False)
+
+        with (
+            patch.object(sweep, "build_figures") as figure_builder,
+            self.assertRaisesRegex(ValueError, "policy does not match"),
+        ):
+            sweep.main(
+                [
+                    "--figures-only",
+                    "--output-dir",
+                    str(self.output_dir),
+                    "--figure-dir",
+                    str(self.figure_dir),
+                ]
+            )
+        figure_builder.assert_not_called()
+
     def test_main_reuses_explicit_caches_without_inference(self):
-        artifacts, paths, figures = sweep.main(
-            [
-                "--sample-index",
-                str(self.index_path),
-                "--overlap-profile",
-                str(self.overlap_path),
-                "--class-file",
-                str(self.root / "missing.names"),
-                "--ground-truth-cache",
-                str(self.ground_truth_path),
-                "--raw-predictions-cache",
-                str(self.raw_path),
-                "--output-dir",
-                str(self.output_dir),
-                "--skip-figures",
-                "--refresh-postprocessing",
-            ]
-        )
+        with patch.object(
+            sweep,
+            "load_verified_checkpoint_selection",
+            return_value=self.selection,
+        ):
+            artifacts, paths, figures = sweep.main(self.replay_arguments())
         self.assertEqual(len(artifacts), 4)
-        self.assertEqual(len(paths), 4)
+        self.assertEqual(len(paths), 6)
+        self.assertEqual(
+            paths[self.cache_manifest_path.name],
+            self.cache_manifest_path,
+        )
+        self.assertTrue(paths["operating_point.json"].is_file())
         self.assertEqual(figures, [])
+
+    def test_custom_selection_run_drives_live_inference_asset_resolution(self):
+        resolved_paths = {
+            "weights": self.root / "custom.weights",
+            "config": self.root / "custom.cfg",
+            "classes": self.class_file,
+        }
+        selected_assets = {
+            "selected_model": sweep.MODEL_NAME,
+            "resolved_paths": resolved_paths,
+        }
+
+        def fake_inference(*_args, ledger_rows, **_kwargs):
+            ledger_rows.extend(self.ledger.to_dict(orient="records"))
+            return self.raw.copy()
+
+        live_output = self.root / "live-output"
+        with (
+            patch.object(
+                sweep,
+                "load_verified_checkpoint_selection",
+                return_value=self.selection,
+            ),
+            patch.object(
+                sweep,
+                "resolve_selected_model_assets",
+                return_value=selected_assets,
+            ) as resolver,
+            patch.object(
+                sweep,
+                "run_raw_inference",
+                side_effect=fake_inference,
+            ) as inference,
+            patch.object(
+                sweep,
+                "build_ground_truth",
+                return_value=self.ground_truth.copy(),
+            ),
+        ):
+            sweep.main(
+                [
+                    "--sample-index",
+                    str(self.index_path),
+                    "--overlap-profile",
+                    str(self.overlap_path),
+                    "--selection-run",
+                    str(self.selection_run),
+                    "--class-file",
+                    str(self.class_file),
+                    "--output-dir",
+                    str(live_output),
+                    "--skip-figures",
+                ]
+            )
+
+        resolver.assert_called_once_with(
+            sweep.PROJECT_ROOT / "detector_service" / "storage",
+            self.selection_run,
+        )
+        self.assertEqual(inference.call_args.kwargs["model_assets"], resolved_paths)
+        self.assertEqual(
+            inference.call_args.kwargs["selection_run"],
+            self.selection_run,
+        )
+        self.assertEqual(
+            inference.call_args.kwargs["expected_names_sha256"],
+            self.selection["model_identity"]["names"],
+        )
+        manifest_path = live_output / "inference_cache_manifest_sample5000.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["status"], "complete")
+        self.assertEqual(manifest["sample_index"]["selected_rows"], len(self.index))
+        self.assertEqual(
+            manifest["checkpoint_selection"]["run_id"],
+            self.selection["selection_run_id"],
+        )
+        self.assertEqual(
+            set(manifest["artifacts"]),
+            {"ground_truth", "raw_predictions", "inference_ledger"},
+        )
+
+    def test_external_cache_overrides_require_one_manifest_bound_package(self):
+        with self.assertRaisesRegex(ValueError, "requires --ground-truth-cache"):
+            sweep.main(
+                [
+                    "--ground-truth-cache",
+                    str(self.ground_truth_path),
+                    "--raw-predictions-cache",
+                    str(self.raw_path),
+                    "--inference-ledger",
+                    str(self.ledger_path),
+                ]
+            )
+
+    def test_managed_historical_cache_without_manifest_fails_closed(self):
+        managed = self.root / "managed-historical"
+        managed.mkdir()
+        self.ground_truth.to_csv(
+            managed / "ground_truth_sample5000.csv",
+            index=False,
+        )
+        self.raw.to_csv(
+            managed / "model2_raw_predictions_sample5000.csv",
+            index=False,
+        )
+        self.ledger.to_csv(
+            managed / "model2_inference_ledger_sample5000.csv",
+            index=False,
+        )
+        with (
+            patch.object(
+                sweep,
+                "load_verified_checkpoint_selection",
+                return_value=self.selection,
+            ),
+            self.assertRaisesRegex(FileNotFoundError, "cannot be trusted"),
+        ):
+            sweep.main(
+                [
+                    "--sample-index",
+                    str(self.index_path),
+                    "--selection-run",
+                    str(self.selection_run),
+                    "--class-file",
+                    str(self.class_file),
+                    "--output-dir",
+                    str(managed),
+                    "--skip-figures",
+                ]
+            )
+
+    def test_replay_rejects_tampered_cache_artifact(self):
+        broken = self.raw.copy()
+        broken.loc[0, "combined_confidence"] = 0.123
+        broken.to_csv(self.raw_path, index=False)
+        with (
+            patch.object(
+                sweep,
+                "load_verified_checkpoint_selection",
+                return_value=self.selection,
+            ),
+            self.assertRaisesRegex(ValueError, "manifest is stale"),
+        ):
+            sweep.main(self.replay_arguments(self.root / "tampered-output"))
+
+    def test_replay_rejects_stale_manifest_policy(self):
+        manifest = json.loads(self.cache_manifest_path.read_text(encoding="utf-8"))
+        manifest["candidate_policy"]["objectness_threshold"] = 0.25
+        self.cache_manifest_path.write_text(
+            json.dumps(manifest),
+            encoding="utf-8",
+        )
+        with (
+            patch.object(
+                sweep,
+                "load_verified_checkpoint_selection",
+                return_value=self.selection,
+            ),
+            self.assertRaisesRegex(ValueError, "manifest is stale"),
+        ):
+            sweep.main(self.replay_arguments(self.root / "stale-output"))
+
+    def test_invalid_new_cache_never_receives_a_complete_manifest(self):
+        invalid = self.raw.copy()
+        invalid.loc[0, "combined_confidence"] = 0.123
+
+        def fake_inference(*_args, ledger_rows, **_kwargs):
+            ledger_rows.extend(self.ledger.to_dict(orient="records"))
+            return invalid
+
+        output = self.root / "invalid-live-output"
+        selected_assets = {
+            "selected_model": sweep.MODEL_NAME,
+            "resolved_paths": {
+                "weights": self.root / "custom.weights",
+                "config": self.root / "custom.cfg",
+                "classes": self.class_file,
+            },
+        }
+        with (
+            patch.object(
+                sweep,
+                "load_verified_checkpoint_selection",
+                return_value=self.selection,
+            ),
+            patch.object(
+                sweep,
+                "resolve_selected_model_assets",
+                return_value=selected_assets,
+            ),
+            patch.object(sweep, "run_raw_inference", side_effect=fake_inference),
+            patch.object(
+                sweep,
+                "build_ground_truth",
+                return_value=self.ground_truth.copy(),
+            ),
+            self.assertRaisesRegex(ValueError, "does not equal"),
+        ):
+            sweep.main(
+                [
+                    "--sample-index",
+                    str(self.index_path),
+                    "--overlap-profile",
+                    str(self.overlap_path),
+                    "--selection-run",
+                    str(self.selection_run),
+                    "--class-file",
+                    str(self.class_file),
+                    "--output-dir",
+                    str(output),
+                    "--skip-figures",
+                ]
+            )
+        self.assertFalse(
+            (output / "inference_cache_manifest_sample5000.json").exists()
+        )
 
     def test_force_cannot_overwrite_explicit_external_caches(self):
         with self.assertRaisesRegex(ValueError, "cannot be combined"):

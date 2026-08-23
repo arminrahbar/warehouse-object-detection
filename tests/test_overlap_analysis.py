@@ -74,10 +74,45 @@ class OverlapFixture(unittest.TestCase):
 
     def profile(self):
         index, _ = self.load()
-        return overlap.build_overlap_profile(index, progress_interval=None)
+        return overlap.build_overlap_profile(
+            index,
+            asset_root=self.root,
+            progress_interval=None,
+        )
 
 
 class GeometryTests(unittest.TestCase):
+    def test_default_paths_follow_the_canonical_stage_hierarchy(self):
+        self.assertEqual(
+            overlap.DEFAULT_DATASET_INDEX,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "00_dataset_inventory"
+            / "dataset_index.csv",
+        )
+        self.assertEqual(
+            overlap.DEFAULT_SELECTED_INDEX,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "02_dataset_analysis"
+            / "02_sample_selection"
+            / "selected_sample_index.csv",
+        )
+        self.assertEqual(
+            overlap.DEFAULT_OVERLAP_DIR,
+            PROJECT_ROOT
+            / "experiments"
+            / "outputs"
+            / "02_dataset_analysis"
+            / "03_overlap_analysis",
+        )
+        self.assertEqual(
+            overlap.DEFAULT_FIGURE_DIR,
+            PROJECT_ROOT / "scratch" / "diagnostic-figures" / "02_dataset_analysis",
+        )
+
     def test_yolo_center_geometry_converts_to_top_left_xywh(self):
         np.testing.assert_allclose(
             overlap.yolo_to_xywh(0.5, 0.4, 0.2, 0.1),
@@ -226,7 +261,11 @@ class EvidenceTests(OverlapFixture):
         broken = self.index.copy()
         broken.loc[0, "num_objects"] = 2
         with self.assertRaisesRegex(ValueError, "Label count mismatch"):
-            overlap.build_overlap_profile(broken, progress_interval=None)
+            overlap.build_overlap_profile(
+                broken,
+                asset_root=self.root,
+                progress_interval=None,
+            )
 
     def test_summary_and_distribution_have_stable_schemas(self):
         profile = self.profile()
@@ -262,6 +301,8 @@ class EvidenceTests(OverlapFixture):
                 str(self.index_path),
                 "--selected-index",
                 str(self.selected_path),
+                "--asset-root",
+                str(self.root),
                 "--output-dir",
                 str(self.output_dir),
                 "--selected-name",
