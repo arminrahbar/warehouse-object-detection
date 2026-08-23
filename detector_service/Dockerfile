@@ -23,6 +23,7 @@ RUN groupadd --system app \
     && useradd --system --gid app --create-home --home-dir /home/app app
 
 COPY --chown=app:app detector_service/ /app/detector_service/
+COPY --chown=app:app LICENSE /app/LICENSE
 
 RUN install -d -o app -g app /app/detector_service/storage/detections
 

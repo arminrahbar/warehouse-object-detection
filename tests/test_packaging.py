@@ -7,6 +7,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GITATTRIBUTES = PROJECT_ROOT / ".gitattributes"
 GITIGNORE = PROJECT_ROOT / ".gitignore"
+LICENSE = PROJECT_ROOT / "LICENSE"
+README = PROJECT_ROOT / "README.md"
 DOCKERFILE = PROJECT_ROOT / "detector_service" / "Dockerfile"
 DOCKERIGNORE = PROJECT_ROOT / ".dockerignore"
 REQUIREMENTS = PROJECT_ROOT / "detector_service" / "requirements.txt"
@@ -22,6 +24,36 @@ def _active_lines(path):
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
+
+
+class RepositoryLicenseTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.license_text = LICENSE.read_text(encoding="utf-8")
+        cls.readme = README.read_text(encoding="utf-8")
+
+    def test_repository_uses_mit_license(self):
+        self.assertTrue(self.license_text.startswith("MIT License\n"))
+        self.assertIn("Copyright (c) 2026 Armin Rahbar", self.license_text)
+        self.assertIn(
+            "Permission is hereby granted, free of charge",
+            self.license_text,
+        )
+        self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', self.license_text)
+
+    def test_readme_scopes_external_assets_out_of_project_license(self):
+        self.assertIn("## License", self.readme)
+        self.assertIn("[MIT License](LICENSE)", self.readme)
+        for external_asset in (
+            "External datasets",
+            "model checkpoints",
+            "model configuration files",
+            "vocabularies",
+            "videos",
+            "Third-party dependencies",
+        ):
+            with self.subTest(external_asset=external_asset):
+                self.assertIn(external_asset, self.readme)
 
 
 class ContainerPackagingTests(unittest.TestCase):
@@ -86,6 +118,12 @@ class ContainerPackagingTests(unittest.TestCase):
         self.assertLess(requirements_copy, dependency_install)
         self.assertLess(dependency_install, source_copy)
 
+    def test_container_includes_repository_license(self):
+        self.assertIn(
+            "COPY --chown=app:app LICENSE /app/LICENSE",
+            self.dockerfile,
+        )
+
     def test_build_fails_if_opencv_darknet_compatibility_changes(self):
         self.assertIn("import cv2", self.dockerfile)
         self.assertIn("cv2.__version__.startswith('4.13.')", self.dockerfile)
@@ -144,7 +182,7 @@ class ContainerPackagingTests(unittest.TestCase):
 
         self.assertFalse(required_rules - rules)
 
-    def test_dockerfile_copies_only_the_runtime_package(self):
+    def test_dockerfile_copies_only_runtime_package_and_license(self):
         copy_sources = re.findall(
             r"(?m)^COPY(?:\s+--\S+)*\s+(\S+)",
             self.dockerfile,
@@ -155,6 +193,7 @@ class ContainerPackagingTests(unittest.TestCase):
             [
                 "detector_service/requirements.txt",
                 "detector_service/",
+                "LICENSE",
             ],
         )
 

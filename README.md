@@ -75,6 +75,7 @@ experiments/OUTPUTS.md              # Contract for ignored generated evidence
 experiments/outputs/                # Numbered local evidence packages (ignored)
 tests/                             # Unit, integration, and packaging tests
 requirements-analysis.txt          # Runtime plus analysis dependencies
+LICENSE                            # MIT terms for original code and documentation
 ```
 
 Model checkpoints, dataset files, videos, generated outputs, and scratch data
@@ -318,7 +319,6 @@ AP50, then breaks an exact tie by fewer retained predictions and finally by the
 lower IoU threshold. The provisional label reflects the absence of an untouched
 confirmation set and uncertainty interval, not ambiguity in how the recorded
 decision is computed.
-policy.
 
 ## Evaluation semantics
 
@@ -362,3 +362,14 @@ class-aware suppression, one-to-one matching, augmentation geometry, cache
 validation, deterministic sampling, experiment schemas, atomic artifact writes,
 container packaging, and numerical regression behavior. Optional parity checks
 self-skip only when their separately managed comparison sources are unavailable.
+
+## License
+
+The repository's original code, documentation, and figures are available under
+the [MIT License](LICENSE).
+
+External datasets, model checkpoints, model configuration files, class
+vocabularies, and videos are not distributed by this repository and are not
+covered by its MIT License. They remain subject to the terms established by
+their respective owners. Third-party dependencies also retain their own
+licenses.
