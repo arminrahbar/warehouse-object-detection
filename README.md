@@ -60,6 +60,8 @@ detector_service/
 ├── app.py                         # Runtime orchestration and CLI
 ├── Dockerfile                     # Reproducible inference image
 ├── requirements.txt               # Exact runtime dependencies
+├── storage/
+│   └── README.md                   # External-asset layout and license boundary
 └── modules/
     ├── inference/
     │   ├── preprocessing.py       # Video capture and frame sampling
@@ -103,11 +105,12 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements-analysis.txt
 ```
 
-Place or link the external assets at `detector_service/storage`:
+Place the external assets under `detector_service/storage`:
 
 ```text
 detector_service/storage/
 ├── logistics/
+│   ├── _darknet.labels
 │   ├── *.jpg
 │   └── *.txt
 ├── yolo_model_1/
@@ -122,11 +125,24 @@ detector_service/storage/
     └── *.mp4
 ```
 
-For an asset directory maintained outside the repository:
+The validated experiment corpus contains 9,525 image-label pairs, 36,721
+labeled objects, and 20 ordered classes. A local `detections/` directory may
+also exist under `storage/`; it is generated output, not an input asset.
+
+If the assets are maintained outside the repository, link the required child
+directories into the tracked storage mount point. For example:
 
 ```bash
-ln -s /absolute/path/to/storage detector_service/storage
+ln -s /absolute/path/to/storage/logistics detector_service/storage/logistics
+ln -s /absolute/path/to/storage/yolo_model_1 detector_service/storage/yolo_model_1
+ln -s /absolute/path/to/storage/yolo_model_2 detector_service/storage/yolo_model_2
+ln -s /absolute/path/to/storage/test_videos detector_service/storage/test_videos
 ```
+
+Experiment commands can instead reference an externally managed asset root
+through their CLI path options. Run the relevant script with `--help`; the
+inventory builder also requires storage-relative `--dataset-dir` and `--classes`
+arguments when `--asset-root` is the storage directory itself.
 
 ## Run inference
 
@@ -246,12 +262,11 @@ Experiment 02's selected workload then supplies Experiments 03–05. See
 [the output contract](experiments/OUTPUTS.md) for the full ownership tree and the
 distinction between evidence outputs, report figures, and smoke-test artifacts.
 
-With the standard repository layout, new inventories serialize asset paths
-under the canonical `detector_service/storage` prefix. A custom `--asset-root`
-instead produces portable paths relative to that root. Evidence readers also
-recognize the single pre-standardization `techtrack/storage` alias so retained
-evidence can still be verified during the path migration; new packages must not
-use that legacy prefix.
+With the standard repository layout, inventories serialize asset paths under
+the canonical `detector_service/storage` prefix. A custom `--asset-root`
+instead produces portable paths relative to that root. Evidence packages use
+only those two path forms so they remain independent of a developer's host
+filesystem.
 
 The runtime benchmark follows the same immutable root-and-run-ID convention as
 the quality and checkpoint-decision stages:

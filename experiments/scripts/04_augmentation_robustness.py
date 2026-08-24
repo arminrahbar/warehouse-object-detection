@@ -610,10 +610,7 @@ def _canonical_image_path(value):
         raise EvidenceContractError(
             f"Logical image_path cannot contain parent traversal: {value}"
         )
-    if tuple(parts[:2]) in {
-        ("detector_service", "storage"),
-        ("techtrack", "storage"),
-    }:
+    if tuple(parts[:2]) == ("detector_service", "storage"):
         return ("storage", *parts[2:])
     return parts
 

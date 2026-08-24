@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import tempfile
 from collections import Counter
@@ -38,6 +39,20 @@ CLASS_SUMMARY_COLUMNS = [
 OBJECT_DISTRIBUTION_COLUMNS = ["num_objects", "image_count"]
 
 
+def _filesystem_path(path):
+    """Return an extended-length Windows path at the filesystem boundary."""
+
+    normal = Path(path).expanduser().absolute()
+    if os.name != "nt":
+        return normal
+    raw = str(normal)
+    if raw.startswith("\\\\?\\") or len(raw) < 248:
+        return normal
+    if raw.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + raw[2:])
+    return Path("\\\\?\\" + raw)
+
+
 @dataclass(frozen=True)
 class IndexBuildResult:
     dataset_index_path: Path
@@ -61,10 +76,11 @@ def load_classes(path):
     """Read an ordered class vocabulary without allowing ID renumbering."""
 
     class_path = Path(path)
-    if not class_path.is_file():
+    class_filesystem_path = _filesystem_path(class_path)
+    if not class_filesystem_path.is_file():
         raise FileNotFoundError(f"Class names file not found: {class_path}")
 
-    lines = class_path.read_text(encoding="utf-8").splitlines()
+    lines = class_filesystem_path.read_text(encoding="utf-8").splitlines()
     if not lines or all(not line.strip() for line in lines):
         raise ValueError(f"Class names file is empty: {class_path}")
     blank_lines = [index for index, line in enumerate(lines, start=1) if not line.strip()]
@@ -105,7 +121,8 @@ def parse_label_file(path, class_count, strict=True):
     errors = []
 
     for line_number, raw_line in enumerate(
-        label_path.read_text(encoding="utf-8").splitlines(), start=1
+        _filesystem_path(label_path).read_text(encoding="utf-8").splitlines(),
+        start=1,
     ):
         stripped = raw_line.strip()
         if not stripped:
@@ -244,7 +261,7 @@ def build_dataset_index(
     destination = Path(output_dir).expanduser().absolute()
     root = Path(asset_root).expanduser().absolute()
 
-    if not dataset_path.is_dir():
+    if not _filesystem_path(dataset_path).is_dir():
         raise NotADirectoryError(f"Dataset directory not found: {dataset_path}")
 
     classes = load_classes(class_names_path)
@@ -260,7 +277,7 @@ def build_dataset_index(
 
     for image_path in image_paths:
         label_path = image_path.with_suffix(".txt")
-        if not label_path.is_file():
+        if not _filesystem_path(label_path).is_file():
             missing_labels.append(image_path)
             if strict:
                 raise FileNotFoundError(
@@ -363,7 +380,13 @@ def build_parser():
         "--asset-root",
         type=Path,
         default=PROJECT_ROOT,
-        help="Root used to resolve assets and serialize portable relative paths.",
+        help=(
+            "Root used to resolve assets and serialize portable relative paths. "
+            "The default dataset and class paths assume this is the repository "
+            "root; when passing the storage directory itself, also pass "
+            "--dataset-dir logistics and --classes "
+            "yolo_model_1/logistics.names."
+        ),
     )
     parser.add_argument(
         "--dataset-dir",
@@ -403,7 +426,7 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     asset_root = args.asset_root.expanduser().resolve()
-    if not asset_root.is_dir():
+    if not _filesystem_path(asset_root).is_dir():
         raise NotADirectoryError(f"Asset root does not exist: {asset_root}")
 
     dataset_dir = _path_from_root(

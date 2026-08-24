@@ -120,10 +120,9 @@ presence alone as evidence that a run completed successfully.
 
 Under the standard repository layout, new inventories serialize asset paths
 with the canonical `detector_service/storage` prefix. With a custom
-`--asset-root`, they serialize portable paths relative to that root. Readers
-accept `techtrack/storage` only as a pre-standardization migration alias for
-retained evidence; producers must not write new packages with that legacy
-prefix.
+`--asset-root`, they serialize portable paths relative to that root. Producers
+and readers share this canonical contract; host-specific and historical
+repository prefixes are not valid evidence paths.
 
 ### Evidence guarantees by stage
 

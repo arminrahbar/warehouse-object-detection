@@ -16,6 +16,7 @@ ANALYSIS_REQUIREMENTS = PROJECT_ROOT / "requirements-analysis.txt"
 DEV_REQUIREMENTS = PROJECT_ROOT / "requirements-dev.txt"
 RUFF_CONFIG = PROJECT_ROOT / "ruff.toml"
 CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
+STORAGE_README = PROJECT_ROOT / "detector_service" / "storage" / "README.md"
 
 
 def _active_lines(path):
@@ -222,6 +223,32 @@ class RepositoryPolicyTests(unittest.TestCase):
         }
 
         self.assertFalse(required_rules - rules)
+
+    def test_storage_contract_is_tracked_while_assets_remain_ignored(self):
+        rules = set(_active_lines(GITIGNORE))
+        self.assertTrue(STORAGE_README.is_file())
+        self.assertTrue(
+            {
+                "!detector_service/storage/",
+                "detector_service/storage/*",
+                "!detector_service/storage/README.md",
+            }.issubset(rules)
+        )
+
+        contract = STORAGE_README.read_text(encoding="utf-8")
+        for required_entry in (
+            "logistics/",
+            "_darknet.labels",
+            "yolo_model_1/",
+            "yolo_model_2/",
+            "test_videos/test_videos/",
+            "9,525 paired JPEG and",
+            "36,721 labeled objects",
+            "does not version the external assets",
+            "does not grant rights",
+        ):
+            with self.subTest(required_entry=required_entry):
+                self.assertIn(required_entry, contract)
 
     def test_git_attributes_enforce_lf_text_and_binary_images(self):
         self.assertEqual(

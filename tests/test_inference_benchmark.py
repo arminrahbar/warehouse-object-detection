@@ -489,7 +489,7 @@ class ModelBenchmarkTests(BenchmarkFixture):
         self.assertEqual(
             benchmark.resolve_indexed_asset_path(
                 storage_root,
-                "techtrack/storage/logistics/a.jpg",
+                "detector_service/storage/logistics/a.jpg",
             ),
             image.absolute(),
         )
@@ -508,7 +508,7 @@ class ModelBenchmarkTests(BenchmarkFixture):
         filesystem = benchmark._filesystem_path(image)
         filesystem.write_bytes(b"benchmark-long-image")
         self.addCleanup(filesystem.unlink, missing_ok=True)
-        logical = f"techtrack/storage/logistics/{image.name}"
+        logical = f"detector_service/storage/logistics/{image.name}"
 
         resolved = benchmark.resolve_indexed_asset_path(storage_root, logical)
         self.assertEqual(resolved, image.absolute())

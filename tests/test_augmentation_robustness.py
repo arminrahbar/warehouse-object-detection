@@ -191,7 +191,7 @@ class RobustnessFixture(unittest.TestCase):
             "augmentation_condition": condition["tag"],
             "augmentation_display": condition["display"],
             "image_file": image_file,
-            "image_path": f"techtrack/storage/images/{image_file}",
+            "image_path": f"detector_service/storage/images/{image_file}",
             "class_id": class_id,
             "class_name": self.classes[class_id],
             "bbox_x": box[0],
@@ -220,7 +220,7 @@ class RobustnessFixture(unittest.TestCase):
             "augmentation_condition": condition["tag"],
             "augmentation_display": condition["display"],
             "image_file": image_file,
-            "image_path": f"techtrack/storage/images/{image_file}",
+            "image_path": f"detector_service/storage/images/{image_file}",
             "bbox_x": box[0],
             "bbox_y": box[1],
             "bbox_w": box[2],
@@ -415,14 +415,13 @@ class DemonstrationTests(RobustnessFixture):
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             demo.load_sample_index(self.index_path)
 
-    def test_path_resolver_maps_both_supported_storage_namespaces(self):
+    def test_path_resolver_maps_canonical_storage_namespace(self):
         expected = self.root / "images" / "a.jpg"
-        for prefix in ("detector_service/storage", "techtrack/storage"):
-            actual = demo.resolve_image_path(
-                f"{prefix}/images/a.jpg",
-                asset_root=self.root,
-            )
-            self.assertEqual(actual, expected)
+        actual = demo.resolve_image_path(
+            "detector_service/storage/images/a.jpg",
+            asset_root=self.root,
+        )
+        self.assertEqual(actual, expected)
 
     def test_panel_builder_applies_all_four_fixed_operations(self):
         image = np.arange(4 * 5 * 3, dtype=np.uint8).reshape(4, 5, 3)
@@ -669,7 +668,7 @@ class CacheValidationTests(RobustnessFixture):
                 condition,
             )
 
-    def test_legacy_and_canonical_storage_prefixes_are_equivalent(self):
+    def test_validated_evidence_preserves_canonical_storage_prefix(self):
         condition = robustness._condition("original")
         ground_truth = robustness.validate_ground_truth(
             self.ground_truth(condition),

@@ -151,15 +151,14 @@ class IndexAndPathTests(unittest.TestCase):
     def _row(name="a", count=1):
         return {
             "image_file": f"{name}.jpg",
-            "image_path": f"techtrack/storage/logistics/{name}.jpg",
-            "label_path": f"techtrack/storage/logistics/{name}.txt",
+            "image_path": f"detector_service/storage/logistics/{name}.jpg",
+            "label_path": f"detector_service/storage/logistics/{name}.txt",
             "num_objects": count,
         }
 
-    def test_both_storage_prefixes_resolve_through_storage_root(self):
+    def test_canonical_and_relative_paths_resolve_through_storage_root(self):
         expected = self.root / "logistics" / "a.jpg"
         for logical in (
-            "techtrack/storage/logistics/a.jpg",
             "detector_service/storage/logistics/a.jpg",
             "logistics/a.jpg",
         ):
@@ -190,7 +189,9 @@ class IndexAndPathTests(unittest.TestCase):
 
     def test_parent_traversal_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "traverse"):
-            comparison.resolve_indexed_path("techtrack/storage/../secret", self.root)
+            comparison.resolve_indexed_path(
+                "detector_service/storage/../secret", self.root
+            )
 
     def test_absolute_paths_must_remain_inside_asset_root(self):
         inside = self.root / "inside.jpg"
@@ -203,8 +204,8 @@ class IndexAndPathTests(unittest.TestCase):
 
     def test_255_character_assets_resolve_hash_and_parse_canonically(self):
         image, label = self._long_asset_pair()
-        logical_image = f"techtrack/storage/logistics/{image.name}"
-        logical_label = f"techtrack/storage/logistics/{label.name}"
+        logical_image = f"detector_service/storage/logistics/{image.name}"
+        logical_label = f"detector_service/storage/logistics/{label.name}"
         resolved = comparison.resolve_indexed_path(logical_image, self.root)
         self.assertEqual(resolved, image.absolute())
         self.assertNotIn("\\\\?\\", str(resolved))
@@ -324,8 +325,10 @@ class EvidenceAndMetricTests(unittest.TestCase):
             "0 0.25 0.25 0.5 0.5\n", encoding="utf-8"
         )
         self.index = pd.DataFrame([{
-            "image_file": "a.jpg", "image_path": "techtrack/storage/logistics/a.jpg",
-            "label_path": "techtrack/storage/logistics/a.txt", "num_objects": 1,
+            "image_file": "a.jpg",
+            "image_path": "detector_service/storage/logistics/a.jpg",
+            "label_path": "detector_service/storage/logistics/a.txt",
+            "num_objects": 1,
         }])
         self.frame = np.zeros((20, 20, 3), dtype=np.uint8)
 
@@ -514,8 +517,8 @@ class FullRunTests(unittest.TestCase):
         self.index_path = self.root / "index.csv"
         pd.DataFrame([{
             "image_file": "a.jpg",
-            "image_path": "techtrack/storage/logistics/a.jpg",
-            "label_path": "techtrack/storage/logistics/a.txt",
+            "image_path": "detector_service/storage/logistics/a.jpg",
+            "label_path": "detector_service/storage/logistics/a.txt",
             "num_objects": 1,
         }]).to_csv(self.index_path, index=False)
         self.output = self.root / "runs"
@@ -578,8 +581,8 @@ class FullRunTests(unittest.TestCase):
         )
         self.addCleanup(image_filesystem.unlink, missing_ok=True)
         self.addCleanup(label_filesystem.unlink, missing_ok=True)
-        logical_image = f"techtrack/storage/logistics/{image.name}"
-        logical_label = f"techtrack/storage/logistics/{label.name}"
+        logical_image = f"detector_service/storage/logistics/{image.name}"
+        logical_label = f"detector_service/storage/logistics/{label.name}"
         pd.DataFrame([{
             "image_file": image.name, "image_path": logical_image,
             "label_path": logical_label, "num_objects": 1,

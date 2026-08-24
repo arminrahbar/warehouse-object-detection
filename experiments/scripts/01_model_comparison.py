@@ -237,7 +237,7 @@ def validate_run_id(value):
 
 
 def resolve_indexed_path(value, asset_root):
-    """Resolve both historic storage prefixes through one external storage root."""
+    """Resolve a canonical or storage-relative path inside an asset root."""
     raw = str(value).strip()
     if not raw:
         raise ValueError("Indexed asset path cannot be empty.")
@@ -249,9 +249,9 @@ def resolve_indexed_path(value, asset_root):
         parts = PurePosixPath(raw.replace("\\", "/")).parts
         if ".." in parts:
             raise ValueError(f"Indexed path cannot traverse parents: {value}")
-        if len(parts) >= 2 and tuple(parts[:2]) in {
-            ("techtrack", "storage"), ("detector_service", "storage")
-        }:
+        if len(parts) >= 2 and tuple(parts[:2]) == (
+            "detector_service", "storage"
+        ):
             parts = parts[2:]
         candidate = _resolved_normal_path(root.joinpath(*parts))
     try:

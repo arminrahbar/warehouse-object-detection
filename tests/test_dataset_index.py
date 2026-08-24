@@ -190,6 +190,36 @@ class LabelParsingTests(DatasetFixture):
 
 
 class ArtifactConstructionTests(DatasetFixture):
+    def test_long_image_and_label_paths_are_indexed(self):
+        stem_length = min(
+            240,
+            max(80, 270 - len(str(self.dataset_dir)) - len(".jpg")),
+        )
+        stem = "q" * stem_length
+        image_path = self.dataset_dir / f"{stem}.jpg"
+        label_path = self.dataset_dir / f"{stem}.txt"
+        dataset_index._filesystem_path(image_path).write_bytes(b"image")
+        dataset_index._filesystem_path(label_path).write_text(
+            "0 0.5 0.5 0.2 0.2\n",
+            encoding="utf-8",
+        )
+        self.addCleanup(
+            dataset_index._filesystem_path(image_path).unlink,
+            missing_ok=True,
+        )
+        self.addCleanup(
+            dataset_index._filesystem_path(label_path).unlink,
+            missing_ok=True,
+        )
+
+        result = self.build()
+        rows = read_rows(result.dataset_index_path)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["image_file"], image_path.name)
+        self.assertEqual(rows[0]["label_file"], label_path.name)
+        self.assertNotIn("\\\\?\\", rows[0]["image_path"])
+
     def test_builder_writes_all_compatible_artifacts(self):
         self.write_pair(
             "b",

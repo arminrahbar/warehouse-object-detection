@@ -339,14 +339,11 @@ class InputValidationTests(SweepFixture):
         with self.assertRaisesRegex(ValueError, "does not cover"):
             sweep.load_overlap_profile(self.overlap_path, self.index)
 
-    def test_external_storage_namespaces_map_to_asset_root(self):
+    def test_canonical_storage_namespace_maps_to_asset_root(self):
         asset_root = self.root / "assets"
         expected = asset_root / "logistics" / "a.jpg"
-        for value in (
-            "detector_service/storage/logistics/a.jpg",
-            "techtrack/storage/logistics/a.jpg",
-        ):
-            self.assertEqual(sweep.resolve_indexed_path(value, asset_root), expected)
+        value = "detector_service/storage/logistics/a.jpg"
+        self.assertEqual(sweep.resolve_indexed_path(value, asset_root), expected)
 
     def test_indexed_paths_reject_parent_traversal_and_external_absolute_paths(self):
         asset_root = self.root / "assets"
@@ -375,35 +372,7 @@ class InputValidationTests(SweepFixture):
         with self.assertRaisesRegex(ValueError, "row count"):
             sweep.validate_inference_ledger(incomplete, self.index, self.raw)
 
-    def test_legacy_storage_namespace_is_the_only_path_alias(self):
-        legacy_ground_truth = self.ground_truth.copy()
-        legacy_ground_truth["image_path"] = legacy_ground_truth["image_path"].str.replace(
-            "detector_service/storage/",
-            "techtrack/storage/",
-            regex=False,
-        )
-        sweep.validate_ground_truth(legacy_ground_truth, self.index, self.classes)
-
-        legacy_raw = self.raw.copy()
-        legacy_raw["image_path"] = legacy_raw["image_path"].str.replace(
-            "detector_service/storage/",
-            "techtrack/storage/",
-            regex=False,
-        )
-        sweep.validate_raw_predictions(legacy_raw, self.index, self.classes)
-
-        legacy_ledger = self.ledger.copy()
-        legacy_ledger["image_path"] = legacy_ledger["image_path"].str.replace(
-            "detector_service/storage/",
-            "techtrack/storage/",
-            regex=False,
-        )
-        sweep.validate_inference_ledger(
-            legacy_ledger,
-            self.index,
-            legacy_raw,
-        )
-
+    def test_validation_rejects_unrelated_image_paths(self):
         for label, table, validator in (
             (
                 "ground truth",

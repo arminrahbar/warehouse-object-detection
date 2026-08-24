@@ -11,7 +11,9 @@ __pycache__/
 
 scratch/
 storage/
-detector_service/storage/
+!detector_service/storage/
+detector_service/storage/*
+!detector_service/storage/README.md
 experiments/notebooks/
 experiments/outputs/
 experiments/figures/

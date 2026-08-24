@@ -433,18 +433,17 @@ def _storage_relative_path(path):
 
     relative = Path(path)
     parts = relative.parts
-    for prefix in (("detector_service", "storage"), ("techtrack", "storage")):
-        if tuple(parts[: len(prefix)]) == prefix:
-            return Path(*parts[len(prefix) :])
+    prefix = ("detector_service", "storage")
+    if tuple(parts[: len(prefix)]) == prefix:
+        return Path(*parts[len(prefix) :])
     return relative
 
 
 def resolve_indexed_asset_path(asset_root, indexed_path):
     """Resolve an indexed path against an external storage directory.
 
-    Legacy repository-root layouts remain supported. When ``asset_root`` is the
-    storage directory itself, either ``techtrack/storage`` or
-    ``detector_service/storage`` is stripped from the indexed path.
+    When ``asset_root`` is the storage directory itself, the canonical
+    ``detector_service/storage`` prefix is stripped from the indexed path.
     """
 
     raw = str(indexed_path).strip()
@@ -1547,9 +1546,9 @@ def build_parser():
         type=Path,
         default=PROJECT_ROOT,
         help=(
-            "External storage directory. Indexed detector_service/storage or "
-            "techtrack/storage prefixes are resolved beneath this directory; "
-            "legacy repository-root layouts are also supported."
+            "External storage directory. Indexed detector_service/storage "
+            "paths are resolved beneath this directory; storage-relative "
+            "paths are also supported."
         ),
     )
     parser.add_argument(

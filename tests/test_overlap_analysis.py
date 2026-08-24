@@ -236,18 +236,14 @@ class IndexValidationTests(OverlapFixture):
         with self.assertRaisesRegex(ValueError, "non-negative integers"):
             self.load()
 
-    def test_external_asset_root_maps_both_supported_namespaces(self):
+    def test_external_asset_root_maps_canonical_namespace(self):
         asset_root = self.root / "assets"
         expected = asset_root / "logistics" / "label.txt"
-        for value in (
-            "detector_service/storage/logistics/label.txt",
-            "techtrack/storage/logistics/label.txt",
-        ):
-            with self.subTest(value=value):
-                self.assertEqual(
-                    overlap.resolve_label_path(value, asset_root=asset_root),
-                    expected,
-                )
+        value = "detector_service/storage/logistics/label.txt"
+        self.assertEqual(
+            overlap.resolve_label_path(value, asset_root=asset_root),
+            expected,
+        )
 
 
 class EvidenceTests(OverlapFixture):

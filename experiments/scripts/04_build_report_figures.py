@@ -521,7 +521,7 @@ def resolve_image_path(value, asset_root):
     if direct.is_absolute():
         return direct
     parts = PurePosixPath(raw.replace("\\", "/")).parts
-    if tuple(parts[:2]) in {("detector_service", "storage"), ("techtrack", "storage")}:
+    if tuple(parts[:2]) == ("detector_service", "storage"):
         return Path(asset_root).expanduser().absolute().joinpath(*parts[2:])
     return PROJECT_ROOT.joinpath(*parts)
 

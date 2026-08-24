@@ -445,10 +445,7 @@ def _canonical_logical_image_path(value):
     )
     if ".." in parts:
         raise ValueError("image_path values cannot contain parent traversal.")
-    if parts[:2] in {
-        ("detector_service", "storage"),
-        ("techtrack", "storage"),
-    }:
+    if parts[:2] == ("detector_service", "storage"):
         return ("storage", *parts[2:])
     return ("logical", *parts)
 

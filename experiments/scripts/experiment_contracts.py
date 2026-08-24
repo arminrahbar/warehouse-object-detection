@@ -13,9 +13,6 @@ from pathlib import Path, PurePosixPath
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SUPPORTED_STORAGE_PREFIXES = {
     ("detector_service", "storage"),
-    # Read-only compatibility for evidence created before the public storage
-    # namespace was standardized. New indexes use detector_service/storage.
-    ("techtrack", "storage"),
 }
 MODEL_ASSET_PATHS = {
     "model1": {
