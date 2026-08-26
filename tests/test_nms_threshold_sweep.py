@@ -14,7 +14,13 @@ from pandas.testing import assert_frame_equal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "03_nms_threshold_sweep.py"
+SCRIPT_PATH = (
+    PROJECT_ROOT
+    / "experiments"
+    / "scripts"
+    / "03_nms_thresholding"
+    / "03_nms_threshold_sweep.py"
+)
 
 
 def load_module(path, name):

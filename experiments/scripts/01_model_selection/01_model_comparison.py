@@ -20,7 +20,7 @@ from pathlib import Path, PurePosixPath
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_INVENTORY_DIR = (
     PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
 )
@@ -116,7 +116,7 @@ PER_CLASS_COLUMNS = [
     "deployment_f1", "threshold_constrained_ap50_11pt",
 ]
 SOURCE_FILES = (
-    Path("experiments/scripts/01_model_comparison.py"),
+    Path("experiments/scripts/01_model_selection/01_model_comparison.py"),
     Path("detector_service/modules/inference/model.py"),
     Path("detector_service/modules/inference/nms.py"),
     Path("detector_service/modules/utils/metrics.py"),

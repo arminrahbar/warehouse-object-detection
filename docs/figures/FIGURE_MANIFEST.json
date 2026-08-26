@@ -2,9 +2,9 @@
   "asset_count": 6,
   "files": [
     {
-      "bytes": 156554,
+      "bytes": 161597,
       "role": "Project runtime, evaluation, and diagnosis scope",
-      "sha256": "5b9c7981f884f549fd19afc65c288b8f6605ca2db021622574f637683ee578b9",
+      "sha256": "3418255f035bfba287052a17f91e5e1cd248961d000eeeb30158a06a1684aa54",
       "source_relative_to_experiment_figure_root": null,
       "target": "01_system_scope.png"
     },
@@ -16,9 +16,9 @@
       "target": "02_checkpoint_selection.png"
     },
     {
-      "bytes": 133607,
+      "bytes": 150997,
       "role": "Analysis-workload candidate comparison",
-      "sha256": "e5be309b258014215548019b411fa38c9138485ad9fdb6e3d998d16dcc92e2c5",
+      "sha256": "29df2b571b1ed345085aab68c567da43461786ed6185cea90e68d3c4c178dc62",
       "source_relative_to_experiment_figure_root": "02_dataset_analysis/03_candidate_scorecard.png",
       "target": "03_analysis_workload.png"
     },
@@ -30,16 +30,16 @@
       "target": "04_nms_operating_point.png"
     },
     {
-      "bytes": 99213,
+      "bytes": 126851,
       "role": "Controlled input-shift quality result",
-      "sha256": "cd31ab3ecba88a5b6eded00e1e0d3fc017b17f067ac3758a7aaec7fcf576c188",
+      "sha256": "f30c7fc4093a2e6b7f3f6508975fc06a6b79f6b15a74276bc33bbd6ca5bf0821",
       "source_relative_to_experiment_figure_root": "04_augmentation_robustness/03_condition_quality.png",
       "target": "05_input_shift_diagnostics.png"
     },
     {
-      "bytes": 123268,
+      "bytes": 162748,
       "role": "Specialized review-queue separation",
-      "sha256": "ff36233a1e4f5bfe1cf68c900d2eabb2ea9a6cb4db075301534c0115a83b05cb",
+      "sha256": "d2346df4d82d0d8b4df8937debfbad298a413481a88cfaba520a2bf876e7a5ab",
       "source_relative_to_experiment_figure_root": "05_hard_negative_mining/05_queue_overlap.png",
       "target": "06_error_review_queues.png"
     }

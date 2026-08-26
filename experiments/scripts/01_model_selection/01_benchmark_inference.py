@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_INVENTORY_DIR = (
     PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
 )
@@ -389,7 +389,7 @@ def load_dataset_sample(path, sample_size, paired=False, seed=DEFAULT_SEED):
     if not index_filesystem.is_file():
         raise FileNotFoundError(
             f"Dataset index not found: {index_path}. "
-            "Run experiments/scripts/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
         )
 
     with index_filesystem.open(newline="", encoding="utf-8") as source:

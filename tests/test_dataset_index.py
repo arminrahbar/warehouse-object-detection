@@ -8,7 +8,13 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "00_build_dataset_inventory.py"
+SCRIPT_PATH = (
+    PROJECT_ROOT
+    / "experiments"
+    / "scripts"
+    / "02_dataset_analysis"
+    / "00_build_dataset_inventory.py"
+)
 
 spec = importlib.util.spec_from_file_location("dataset_index_under_test", SCRIPT_PATH)
 dataset_index = importlib.util.module_from_spec(spec)

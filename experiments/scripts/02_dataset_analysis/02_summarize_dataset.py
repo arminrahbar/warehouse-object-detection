@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_INVENTORY_DIR = (
     PROJECT_ROOT / "experiments" / "outputs" / "00_dataset_inventory"
 )
@@ -75,7 +75,7 @@ def _read_csv(path, label):
     if not source_path.is_file():
         raise FileNotFoundError(
             f"{label} not found: {source_path}. "
-            "Run experiments/scripts/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
         )
     with source_path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source)

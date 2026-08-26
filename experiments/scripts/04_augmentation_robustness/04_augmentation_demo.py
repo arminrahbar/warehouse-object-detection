@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -63,7 +63,7 @@ def load_sample_index(path):
     if not source.is_file():
         raise FileNotFoundError(
             f"Selected sample index not found: {source}. "
-            "Run experiments/scripts/02_dataset_sampling.py first."
+            "Run experiments/scripts/02_dataset_analysis/02_dataset_sampling.py first."
         )
     sample = pd.read_csv(source)
     _required_columns(sample, ["image_file", "image_path", "num_objects"], "Sample index")

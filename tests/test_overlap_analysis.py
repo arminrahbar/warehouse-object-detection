@@ -13,7 +13,13 @@ from pandas.testing import assert_frame_equal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "02_overlap_analysis.py"
+SCRIPT_PATH = (
+    PROJECT_ROOT
+    / "experiments"
+    / "scripts"
+    / "02_dataset_analysis"
+    / "02_overlap_analysis.py"
+)
 
 
 def load_module(path, name):

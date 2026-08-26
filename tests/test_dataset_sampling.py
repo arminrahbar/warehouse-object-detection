@@ -12,7 +12,13 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "02_dataset_sampling.py"
+SCRIPT_PATH = (
+    PROJECT_ROOT
+    / "experiments"
+    / "scripts"
+    / "02_dataset_analysis"
+    / "02_dataset_sampling.py"
+)
 
 spec = importlib.util.spec_from_file_location("dataset_sampling_under_test", SCRIPT_PATH)
 sampling = importlib.util.module_from_spec(spec)

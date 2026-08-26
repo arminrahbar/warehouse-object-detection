@@ -22,10 +22,11 @@ import numpy as np
 import pandas as pd
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+SHARED_SCRIPT_DIR = SCRIPT_DIR.parent
+if str(SHARED_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SHARED_SCRIPT_DIR))
 
 from report_figure_style import (  # noqa: E402
     GRID,
@@ -483,27 +484,27 @@ def _design_figure(evidence):
                 "heading": "Input",
                 "bullets": [
                     "Checkpoint B configuration",
-                    "5,000 selected images",
-                    "19,196 labeled objects across 20 classes",
-                    "One reused decoded-candidate table",
+                    "Fixed 5,000-image workload",
+                    "19,196 labels across 20 classes",
+                    "Reused decoded-candidate table",
                 ],
             },
             {
-                "heading": "Controlled",
+                "heading": "Fixed controls",
                 "bullets": [
-                    "Combined confidence at least 0.50",
-                    "Class-aware NMS at seven IoU thresholds",
-                    "Same-class one-to-one matching at IoU 0.50",
-                    "Equal-weight 20-class, 11-point AP50",
+                    "Confidence floor fixed at 0.50",
+                    "Seven class-aware NMS IoU thresholds",
+                    "Same-class matching at IoU 0.50",
+                    "11-point AP50 over 20 classes",
                 ],
             },
             {
                 "heading": "Decision",
                 "bullets": [
-                    "Retain 0.30 as the provisional default",
+                    "Keep 0.30 as the provisional default",
                     "Treat 0.20 as a compact near-equivalent",
-                    "Do not loosen above 0.50 without new evidence",
-                    "Carry 0.30 into robustness and error analysis",
+                    "Require new evidence above 0.50",
+                    "Use 0.30 in downstream analyses",
                 ],
             },
         ],

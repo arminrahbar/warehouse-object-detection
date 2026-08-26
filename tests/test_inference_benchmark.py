@@ -12,7 +12,13 @@ from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "01_benchmark_inference.py"
+SCRIPT_PATH = (
+    PROJECT_ROOT
+    / "experiments"
+    / "scripts"
+    / "01_model_selection"
+    / "01_benchmark_inference.py"
+)
 
 spec = importlib.util.spec_from_file_location("inference_benchmark_under_test", SCRIPT_PATH)
 benchmark = importlib.util.module_from_spec(spec)
@@ -182,7 +188,11 @@ class BenchmarkContractTests(BenchmarkFixture):
 
     def test_benchmark_policy_matches_the_inference_pipeline(self):
         comparison_path = (
-            PROJECT_ROOT / "experiments" / "scripts" / "01_model_comparison.py"
+            PROJECT_ROOT
+            / "experiments"
+            / "scripts"
+            / "01_model_selection"
+            / "01_model_comparison.py"
         )
         comparison_spec = importlib.util.spec_from_file_location(
             "comparison_for_benchmark_contract",

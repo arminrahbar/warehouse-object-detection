@@ -9,7 +9,13 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = PROJECT_ROOT / "experiments" / "scripts" / "01_select_checkpoint.py"
+SCRIPT_PATH = (
+    PROJECT_ROOT
+    / "experiments"
+    / "scripts"
+    / "01_model_selection"
+    / "01_select_checkpoint.py"
+)
 spec = importlib.util.spec_from_file_location("checkpoint_selection_under_test", SCRIPT_PATH)
 selection = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(selection)

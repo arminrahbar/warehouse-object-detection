@@ -9,6 +9,44 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = PROJECT_ROOT / "experiments" / "scripts"
 OUTPUT_ROOT = PROJECT_ROOT / "experiments" / "outputs"
+SCRIPT_PATHS = {
+    "00_build_dataset_inventory.py": Path(
+        "02_dataset_analysis/00_build_dataset_inventory.py"
+    ),
+    "01_model_comparison.py": Path(
+        "01_model_selection/01_model_comparison.py"
+    ),
+    "01_benchmark_inference.py": Path(
+        "01_model_selection/01_benchmark_inference.py"
+    ),
+    "01_select_checkpoint.py": Path(
+        "01_model_selection/01_select_checkpoint.py"
+    ),
+    "02_summarize_dataset.py": Path(
+        "02_dataset_analysis/02_summarize_dataset.py"
+    ),
+    "02_dataset_sampling.py": Path(
+        "02_dataset_analysis/02_dataset_sampling.py"
+    ),
+    "02_overlap_analysis.py": Path(
+        "02_dataset_analysis/02_overlap_analysis.py"
+    ),
+    "03_nms_threshold_sweep.py": Path(
+        "03_nms_thresholding/03_nms_threshold_sweep.py"
+    ),
+    "04_augmentation_demo.py": Path(
+        "04_augmentation_robustness/04_augmentation_demo.py"
+    ),
+    "04_augmentation_robustness.py": Path(
+        "04_augmentation_robustness/04_augmentation_robustness.py"
+    ),
+    "05_build_hnm_components.py": Path(
+        "05_hard_negative_mining/05_build_hnm_components.py"
+    ),
+    "05_build_error_review_queues.py": Path(
+        "05_hard_negative_mining/05_build_error_review_queues.py"
+    ),
+}
 
 
 def load_script(filename):
@@ -17,7 +55,7 @@ def load_script(filename):
     module_name = "output_contract_" + Path(filename).stem.replace("-", "_")
     specification = importlib.util.spec_from_file_location(
         module_name,
-        SCRIPT_DIR / filename,
+        SCRIPT_DIR / SCRIPT_PATHS[filename],
     )
     if specification is None or specification.loader is None:
         raise ImportError(f"Unable to import experiment script: {filename}")

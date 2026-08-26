@@ -15,7 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = Path(
     os.environ.get(
         "MODEL_COMPARISON_SCRIPT",
-        PROJECT_ROOT / "experiments" / "scripts" / "01_model_comparison.py",
+        PROJECT_ROOT
+        / "experiments"
+        / "scripts"
+        / "01_model_selection"
+        / "01_model_comparison.py",
     )
 )
 spec = importlib.util.spec_from_file_location("model_comparison_under_test", SCRIPT_PATH)

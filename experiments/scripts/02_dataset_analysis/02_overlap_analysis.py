@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -223,12 +223,12 @@ def load_and_validate_indexes(dataset_index_path, selected_index_path):
     if not full_path.is_file():
         raise FileNotFoundError(
             f"Dataset index not found: {full_path}. "
-            "Run experiments/scripts/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
         )
     if not selected_path.is_file():
         raise FileNotFoundError(
             f"Selected sample index not found: {selected_path}. "
-            "Run experiments/scripts/02_dataset_sampling.py first."
+            "Run experiments/scripts/02_dataset_analysis/02_dataset_sampling.py first."
         )
 
     full = pd.read_csv(full_path)

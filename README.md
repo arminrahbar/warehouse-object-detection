@@ -235,12 +235,12 @@ through `05` correspond to the connected experiment reports.
 
 | Stage | Primary entry point | Engineering question |
 |---|---|---|
-| 00 · Inventory | `experiments/scripts/00_build_dataset_inventory.py` | Which image/label pairs and classes form the validated corpus? |
-| 01 · Model selection | `experiments/scripts/01_model_comparison.py` | Which checkpoint provides the stronger quality baseline? |
-| 02 · Dataset analysis | `experiments/scripts/02_dataset_sampling.py` | Which bounded workload preserves class, density, and crowding characteristics? |
-| 03 · NMS thresholding | `experiments/scripts/03_nms_threshold_sweep.py` | Which class-aware IoU setting provides the best measured quality/output trade-off? |
-| 04 · Input-shift diagnostics | `experiments/scripts/04_augmentation_robustness.py` | Which controlled input changes most strongly affect the selected pipeline? |
-| 05 · Error review | `experiments/scripts/05_build_error_review_queues.py` | Which images should be prioritized for different kinds of detector review? |
+| 00 · Inventory | `experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py` | Which image/label pairs and classes form the validated corpus? |
+| 01 · Model selection | `experiments/scripts/01_model_selection/01_model_comparison.py` | Which checkpoint provides the stronger quality baseline? |
+| 02 · Dataset analysis | `experiments/scripts/02_dataset_analysis/02_dataset_sampling.py` | Which bounded workload preserves class, density, and crowding characteristics? |
+| 03 · NMS thresholding | `experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py` | Which class-aware IoU setting provides the best measured quality/output trade-off? |
+| 04 · Input-shift diagnostics | `experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py` | Which controlled input changes most strongly affect the selected pipeline? |
+| 05 · Error review | `experiments/scripts/05_hard_negative_mining/05_build_error_review_queues.py` | Which images should be prioritized for different kinds of detector review? |
 
 Use each script's `--help` output for its required paths and controls. Start
 with a bounded pilot through `--max-images` where supported before launching a

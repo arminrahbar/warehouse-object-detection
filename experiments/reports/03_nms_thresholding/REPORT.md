@@ -250,7 +250,7 @@ uncritically.
 
 | Responsibility | Reference |
 |---|---|
-| Candidate validation and threshold sweep | `experiments/scripts/03_nms_threshold_sweep.py` |
+| Candidate validation and threshold sweep | `experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py` |
 | Combined-confidence calculation and class-aware suppression | `detector_service/modules/inference/nms.py` |
 | IoU, one-to-one matching, precision–recall, and AP | `detector_service/modules/utils/metrics.py` |
 
@@ -262,7 +262,7 @@ and the experiment, while metric code remains separate from suppression. This
 keeps the operating policy aligned with the service without allowing the
 evaluation metric to influence which detections are retained.
 
-`experiments/scripts/03_nms_threshold_sweep.py` performs the controlled sweep
+`experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py` performs the controlled sweep
 over the seven declared IoU thresholds using Checkpoint B, the Experiment 02
 workload, the fixed confidence policy, and the ordered 20-class vocabulary.
 The run validates the expected complete and crowded-slice populations,

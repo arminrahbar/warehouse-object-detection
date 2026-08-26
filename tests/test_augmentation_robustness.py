@@ -29,7 +29,9 @@ if "cv2" not in sys.modules:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_DIR = PROJECT_ROOT / "experiments" / "scripts"
+SCRIPT_DIR = (
+    PROJECT_ROOT / "experiments" / "scripts" / "04_augmentation_robustness"
+)
 
 
 def load_module(path, name):

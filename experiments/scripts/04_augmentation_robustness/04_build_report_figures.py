@@ -25,10 +25,11 @@ import pandas as pd
 from PIL import Image
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT_DIR = PROJECT_ROOT / "experiments" / "scripts"
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT_DIR = Path(__file__).resolve().parent
+SHARED_SCRIPT_DIR = SCRIPT_DIR.parent
+if str(SHARED_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SHARED_SCRIPT_DIR))
 
 from report_figure_style import (  # noqa: E402
     GRID,

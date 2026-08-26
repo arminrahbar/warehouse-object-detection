@@ -109,9 +109,9 @@ def three_panel_figure(title, subtitle, panels):
         require(1 <= len(bullets) <= 5, f"{heading} must contain one to five bullets.")
         accent = str(panel.get("accent", default_accent))
         card = FancyBboxPatch(
-            (left, 0.12),
+            (left, 0.07),
             0.27,
-            0.65,
+            0.70,
             boxstyle="round,pad=0.012,rounding_size=0.018",
             facecolor=WHITE,
             edgecolor=GRID,
@@ -140,10 +140,26 @@ def three_panel_figure(title, subtitle, panels):
             va="center",
         )
 
-        y = 0.645
-        base_step = 0.49 / max(len(bullets) - 1, 1)
-        for bullet in bullets:
-            wrapped = textwrap.fill(bullet, width=35)
+        wrapped_bullets = [textwrap.wrap(bullet, width=35) or [""] for bullet in bullets]
+        total_lines = sum(len(lines) for lines in wrapped_bullets)
+        content_top = 0.645
+        content_bottom = 0.105
+        content_span = content_top - content_bottom
+        minimum_gap = 0.025
+        line_height = min(
+            0.042,
+            (content_span - minimum_gap * max(len(bullets) - 1, 0))
+            / total_lines,
+        )
+        gap = (
+            (content_span - total_lines * line_height) / (len(bullets) - 1)
+            if len(bullets) > 1
+            else 0.0
+        )
+
+        y = content_top
+        for lines in wrapped_bullets:
+            wrapped = "\n".join(lines)
             axis.text(
                 left + 0.022,
                 y,
@@ -163,7 +179,7 @@ def three_panel_figure(title, subtitle, panels):
                 va="top",
                 linespacing=1.25,
             )
-            y -= min(base_step, 0.16)
+            y -= len(lines) * line_height + gap
     return fig
 
 

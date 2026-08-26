@@ -14,7 +14,7 @@ from pandas.testing import assert_frame_equal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_DIR = PROJECT_ROOT / "experiments" / "scripts"
+SCRIPT_DIR = PROJECT_ROOT / "experiments" / "scripts" / "05_hard_negative_mining"
 
 
 def load_module(path, name):

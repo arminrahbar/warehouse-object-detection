@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DATASET_RELATIVE = Path("detector_service/storage/logistics")
 DEFAULT_CLASSES_RELATIVE = Path(
     "detector_service/storage/yolo_model_1/logistics.names"

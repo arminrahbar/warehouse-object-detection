@@ -12,8 +12,9 @@ import pandas as pd
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+SHARED_SCRIPT_DIR = SCRIPT_DIR.parent
+if str(SHARED_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SHARED_SCRIPT_DIR))
 
 from report_figure_style import (  # noqa: E402
     GRID,
@@ -49,7 +50,7 @@ def _filesystem_path(path):
 import matplotlib.pyplot as plt  # noqa: E402
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_EXPERIMENT_DIR = (
     PROJECT_ROOT / "experiments" / "outputs" / "05_hard_negative_mining"
 )

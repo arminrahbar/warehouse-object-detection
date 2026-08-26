@@ -252,11 +252,11 @@ publishing an image.
 |---|---|
 | Runtime inference | `python -m detector_service.app --help` |
 | Test suite | `python -m unittest discover -s tests -v` |
-| Checkpoint comparison | `experiments/scripts/01_model_comparison.py` |
-| Dataset workload | `experiments/scripts/02_dataset_sampling.py` |
-| NMS sweep | `experiments/scripts/03_nms_threshold_sweep.py` |
-| Input-shift diagnostics | `experiments/scripts/04_augmentation_robustness.py` |
-| Error-review queues | `experiments/scripts/05_build_hnm_components.py` → `experiments/scripts/05_build_error_review_queues.py` |
+| Checkpoint comparison | `experiments/scripts/01_model_selection/01_model_comparison.py` |
+| Dataset workload | `experiments/scripts/02_dataset_analysis/02_dataset_sampling.py` |
+| NMS sweep | `experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py` |
+| Input-shift diagnostics | `experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py` |
+| Error-review queues | `experiments/scripts/05_hard_negative_mining/05_build_hnm_components.py` → `experiments/scripts/05_hard_negative_mining/05_build_error_review_queues.py` |
 
 **Interpretation.** Each analytical responsibility has an explicit entry point.
 Experiment 05 separates reusable per-image error calculations from the review-
