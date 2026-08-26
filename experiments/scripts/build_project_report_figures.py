@@ -16,8 +16,9 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from report_figure_style import (  # noqa: E402
-    build_atomic_package,
     require,
+    save_figure_png,
+    style_context,
     three_panel_figure,
 )
 
@@ -68,12 +69,6 @@ def _validate_png(path):
     require(path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", f"Invalid PNG signature: {path}")
 
 
-def _validate_svg(path):
-    require(path.is_file(), f"Missing curated SVG source: {path}")
-    prefix = path.read_text(encoding="utf-8")[:1000].lower()
-    require("<svg" in prefix, f"Invalid SVG source: {path}")
-
-
 def _system_scope_figure():
     return three_panel_figure(
         "System responsibilities at a glance",
@@ -110,24 +105,19 @@ def _system_scope_figure():
     )
 
 
-def _copy_curated_pair(source_root, staging, target_stem, source_stem, role):
-    records = []
-    for extension, validator in (("png", _validate_png), ("svg", _validate_svg)):
-        source = source_root / f"{source_stem}.{extension}"
-        validator(source)
-        destination = staging / f"{target_stem}.{extension}"
-        shutil.copyfile(source, destination)
-        require(_sha256(source) == _sha256(destination), f"Copy hash mismatch: {source}")
-        records.append(
-            {
-                "target": destination.name,
-                "source_relative_to_experiment_figure_root": f"{source_stem}.{extension}",
-                "role": role,
-                "bytes": destination.stat().st_size,
-                "sha256": _sha256(destination),
-            }
-        )
-    return records
+def _copy_curated_png(source_root, staging, target_stem, source_stem, role):
+    source = source_root / f"{source_stem}.png"
+    _validate_png(source)
+    destination = staging / f"{target_stem}.png"
+    shutil.copyfile(source, destination)
+    require(_sha256(source) == _sha256(destination), f"Copy hash mismatch: {source}")
+    return {
+        "target": destination.name,
+        "source_relative_to_experiment_figure_root": f"{source_stem}.png",
+        "role": role,
+        "bytes": destination.stat().st_size,
+        "sha256": _sha256(destination),
+    }
 
 
 def build_project_figure_package(source_root, output_dir):
@@ -141,18 +131,25 @@ def build_project_figure_package(source_root, output_dir):
     staging = destination.parent / f".{destination.name}.incomplete"
     require(not staging.exists(), f"Incomplete project figure build already exists: {staging}")
 
-    # Reuse the shared renderer for the one project-level structural visual, then
-    # add byte-identical curated experiment figures to its staging directory.
-    build_atomic_package(
-        staging,
-        (("01_system_scope", _system_scope_figure),),
-        hash_salt="warehouse-object-detection-project-report-v1",
-    )
+    staging.mkdir()
     records = []
     try:
+        with style_context("warehouse-object-detection-project-report-v1"):
+            save_figure_png(_system_scope_figure(), staging, "01_system_scope")
+        system_path = staging / "01_system_scope.png"
+        records.append(
+            {
+                "target": system_path.name,
+                "source_relative_to_experiment_figure_root": None,
+                "role": "Project runtime, evaluation, and diagnosis scope",
+                "bytes": system_path.stat().st_size,
+                "sha256": _sha256(system_path),
+            }
+        )
+
         for target_stem, source_stem, role in CURATED_SOURCES:
-            records.extend(
-                _copy_curated_pair(
+            records.append(
+                _copy_curated_png(
                     source_root,
                     staging,
                     target_stem,
@@ -161,24 +158,11 @@ def build_project_figure_package(source_root, output_dir):
                 )
             )
 
-        for extension in ("png", "svg"):
-            system_path = staging / f"01_system_scope.{extension}"
-            records.insert(
-                0 if extension == "png" else 1,
-                {
-                    "target": system_path.name,
-                    "source_relative_to_experiment_figure_root": None,
-                    "role": "Project runtime, evaluation, and diagnosis scope",
-                    "bytes": system_path.stat().st_size,
-                    "sha256": _sha256(system_path),
-                },
-            )
-
         manifest = {
             "schema_version": 1,
             "generator": "experiments/scripts/build_project_report_figures.py",
             "logical_figure_count": 6,
-            "asset_count": 12,
+            "asset_count": 6,
             "files": sorted(records, key=lambda item: item["target"]),
         }
         manifest_path = staging / MANIFEST_NAME
@@ -188,12 +172,11 @@ def build_project_figure_package(source_root, output_dir):
             newline="\n",
         )
         expected = {
-            f"{stem}.{extension}"
+            f"{stem}.png"
             for stem in (
                 "01_system_scope",
                 *[entry[0] for entry in CURATED_SOURCES],
             )
-            for extension in ("png", "svg")
         } | {MANIFEST_NAME}
         actual = {path.name for path in staging.iterdir() if path.is_file()}
         require(actual == expected, "Project figure package has an unexpected file set.")

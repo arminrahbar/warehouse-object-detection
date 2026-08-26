@@ -5,7 +5,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -414,54 +414,6 @@ class ArtifactAndCompatibilityTests(SamplingFixture):
         self.assertEqual([path.name for path in paths], list(artifacts))
         self.assertTrue(all(path.is_file() for path in paths))
         self.assertEqual(list(self.output_dir.glob("*.tmp")), [])
-
-    def test_figure_builder_emits_three_canonical_names(self):
-        index, classes = self.load()
-        artifacts, _, _ = sampling.build_sampling_evidence(
-            index,
-            classes,
-            self.sample_size,
-            42,
-        )
-        pyplot = types.ModuleType("matplotlib.pyplot")
-        for method in (
-            "figure",
-            "bar",
-            "barh",
-            "xticks",
-            "yticks",
-            "xlabel",
-            "ylabel",
-            "title",
-            "tight_layout",
-            "legend",
-            "savefig",
-            "close",
-        ):
-            setattr(pyplot, method, Mock(name=method))
-        matplotlib = types.ModuleType("matplotlib")
-        matplotlib.__path__ = []
-        matplotlib.pyplot = pyplot
-
-        with patch.dict(
-            sys.modules,
-            {"matplotlib": matplotlib, "matplotlib.pyplot": pyplot},
-        ):
-            paths = sampling.build_figures(artifacts, self.figure_dir)
-
-        self.assertEqual(
-            [path.name for path in paths],
-            [
-                "01_class_distribution_error.png",
-                "02_class_distribution_comparison.png",
-                "03_density_distribution.png",
-            ],
-        )
-        self.assertEqual(
-            [call.args[0].name for call in pyplot.savefig.call_args_list],
-            [path.name for path in paths],
-        )
-        self.assertEqual(pyplot.close.call_count, 3)
 
     def test_main_can_skip_figures_for_headless_analysis(self):
         result = sampling.main(

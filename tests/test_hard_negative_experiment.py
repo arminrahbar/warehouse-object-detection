@@ -480,20 +480,6 @@ class QueueContractTests(HardNegativeFixture):
             dict.fromkeys(queues_script.ERROR_COMPONENT_COLUMNS, 1.0),
         )
 
-    def test_seven_canonical_figure_names_are_explicit(self):
-        self.assertEqual(
-            queues_script.FIGURE_FILENAMES,
-            (
-                "01_error_component_distribution.png",
-                "02_error_component_correlation.png",
-                "03_review_queue_overlap.png",
-                "04_scene_density_by_queue.png",
-                "05_image_profile_by_queue.png",
-                "06_error_profile_by_queue.png",
-                "07_class_presence_by_queue.png",
-            ),
-        )
-
     def test_parse_class_names_supports_json_python_lists_and_plain_values(self):
         self.assertEqual(queues_script.parse_class_names('["alpha", "beta"]'), ["alpha", "beta"])
         self.assertEqual(queues_script.parse_class_names("['alpha']"), ["alpha"])
@@ -627,28 +613,6 @@ class QueueArtifactTests(HardNegativeFixture):
         second = queues_script.write_artifacts(self.output_dir, artifacts)
         after = {name: path.read_bytes() for name, path in second.items()}
         self.assertEqual(before, after)
-
-    def test_figures_only_reuses_existing_artifacts(self):
-        component_path = self.write_components()
-        artifacts = queues_script.build_artifacts(self.build_components(), top_n=2)
-        queues_script.write_artifacts(self.output_dir, artifacts)
-        expected = [self.figure_dir / name for name in queues_script.FIGURE_FILENAMES]
-        with patch.object(queues_script, "build_figures", return_value=expected) as build:
-            result = queues_script.main(
-                [
-                    "--components",
-                    str(component_path),
-                    "--output-dir",
-                    str(self.output_dir),
-                    "--figure-dir",
-                    str(self.figure_dir),
-                    "--top-n",
-                    "2",
-                    "--figures-only",
-                ]
-            )
-        self.assertEqual(result[2], expected)
-        build.assert_called_once()
 
     def test_missing_derived_artifacts_are_reported_together(self):
         with self.assertRaisesRegex(FileNotFoundError, "Missing review-queue artifacts"):

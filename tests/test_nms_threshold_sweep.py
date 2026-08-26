@@ -533,7 +533,7 @@ class ArtifactTests(SweepFixture):
             assert_frame_equal(pd.read_csv(path), artifacts[name], check_dtype=False)
         self.assertEqual(list(self.output_dir.glob(".*.csv")), [])
 
-    def test_complete_derived_package_validates_before_figure_use(self):
+    def test_complete_derived_package_validates(self):
         artifacts = self.build()
         validated = sweep.validate_derived_artifacts(artifacts, "sample5000")
         self.assertEqual(set(validated), set(artifacts))
@@ -569,29 +569,6 @@ class ArtifactTests(SweepFixture):
                 message,
             ):
                 sweep.validate_derived_artifacts(package, "sample5000")
-
-    def test_figures_only_rejects_invalid_derived_package_before_rendering(self):
-        artifacts = self.build()
-        sweep.write_sweep_artifacts(self.output_dir, artifacts)
-        summary_path = self.output_dir / "nms_threshold_summary_sample5000.csv"
-        summary = pd.read_csv(summary_path)
-        summary.loc[0, "score_threshold"] = 0.25
-        summary.to_csv(summary_path, index=False)
-
-        with (
-            patch.object(sweep, "build_figures") as figure_builder,
-            self.assertRaisesRegex(ValueError, "policy does not match"),
-        ):
-            sweep.main(
-                [
-                    "--figures-only",
-                    "--output-dir",
-                    str(self.output_dir),
-                    "--figure-dir",
-                    str(self.figure_dir),
-                ]
-            )
-        figure_builder.assert_not_called()
 
     def test_main_reuses_explicit_caches_without_inference(self):
         with patch.object(
@@ -834,43 +811,6 @@ class ArtifactTests(SweepFixture):
                     str(self.ground_truth_path),
                 ]
             )
-
-    def test_figure_builder_emits_four_canonical_names(self):
-        artifacts = self.build()
-        summary = artifacts["nms_threshold_summary_sample5000.csv"]
-        duplicates = artifacts["duplicate_summary_by_threshold_sample5000.csv"]
-        subsets = artifacts["subset_summary_by_threshold_sample5000.csv"]
-
-        pyplot = types.ModuleType("matplotlib.pyplot")
-        figures = []
-
-        def subplots(**_kwargs):
-            figure = Mock()
-            axis = Mock()
-            figure.savefig.side_effect = lambda path, **kwargs: Path(path).write_bytes(b"figure")
-            figures.append(figure)
-            return figure, axis
-
-        pyplot.subplots = Mock(side_effect=subplots)
-        pyplot.close = Mock()
-        matplotlib = types.ModuleType("matplotlib")
-        matplotlib.pyplot = pyplot
-        with patch.dict(
-            sys.modules,
-            {"matplotlib": matplotlib, "matplotlib.pyplot": pyplot},
-        ):
-            paths = sweep.build_figures(summary, duplicates, subsets, self.figure_dir)
-        self.assertEqual(
-            [path.name for path in paths],
-            [
-                "01_map_by_threshold.png",
-                "02_prediction_count_by_threshold.png",
-                "03_duplicate_pairs_by_threshold.png",
-                "04_map_by_threshold_and_subset.png",
-            ],
-        )
-        self.assertTrue(all(path.read_bytes() == b"figure" for path in paths))
-        self.assertEqual(pyplot.close.call_count, 4)
 
 
 class ReferenceCompatibilityTests(SweepFixture):

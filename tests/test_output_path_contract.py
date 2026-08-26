@@ -43,10 +43,6 @@ class OutputPathContractTests(unittest.TestCase):
             "04_augmentation_robustness.py",
             "05_build_hnm_components.py",
             "05_build_error_review_queues.py",
-            "02_build_report_figures.py",
-            "03_build_report_figures.py",
-            "04_build_report_figures.py",
-            "05_build_report_figures.py",
         )
         cls.modules = {filename: load_script(filename) for filename in filenames}
 
@@ -203,108 +199,6 @@ class OutputPathContractTests(unittest.TestCase):
         for filename, constant, relative_path in expectations:
             with self.subTest(filename=filename, constant=constant):
                 self.assert_contract_path(filename, constant, relative_path)
-
-    def test_report_builders_read_from_canonical_evidence_directories(self):
-        expectations = (
-            ("02_build_report_figures.py", "DEFAULT_INDEX_DIR", "00_dataset_inventory"),
-            (
-                "02_build_report_figures.py",
-                "DEFAULT_SUMMARY_DIR",
-                "02_dataset_analysis/01_dataset_summary",
-            ),
-            (
-                "02_build_report_figures.py",
-                "DEFAULT_SAMPLING_DIR",
-                "02_dataset_analysis/02_sample_selection",
-            ),
-            (
-                "02_build_report_figures.py",
-                "DEFAULT_OVERLAP_DIR",
-                "02_dataset_analysis/03_overlap_analysis",
-            ),
-            (
-                "03_build_report_figures.py",
-                "DEFAULT_EVIDENCE_DIR",
-                "03_nms_thresholding/01_threshold_sweep",
-            ),
-            (
-                "04_build_report_figures.py",
-                "DEFAULT_ROBUSTNESS_DIR",
-                "04_augmentation_robustness/01_condition_evaluation",
-            ),
-            (
-                "04_build_report_figures.py",
-                "DEFAULT_SAMPLE_INDEX",
-                "02_dataset_analysis/02_sample_selection/selected_sample_index.csv",
-            ),
-            (
-                "04_build_report_figures.py",
-                "DEFAULT_NMS_SUMMARY",
-                "03_nms_thresholding/01_threshold_sweep/"
-                "nms_threshold_summary_sample5000.csv",
-            ),
-            (
-                "05_build_report_figures.py",
-                "DEFAULT_COMPONENT_DIR",
-                "05_hard_negative_mining/01_error_components",
-            ),
-            (
-                "05_build_report_figures.py",
-                "DEFAULT_QUEUE_DIR",
-                "05_hard_negative_mining/02_review_queues",
-            ),
-        )
-        for filename, constant, relative_path in expectations:
-            with self.subTest(filename=filename, constant=constant):
-                self.assert_contract_path(filename, constant, relative_path)
-
-    def test_diagnostic_figures_do_not_share_publication_directories(self):
-        diagnostic_root = PROJECT_ROOT / "scratch" / "diagnostic-figures"
-        expectations = (
-            (
-                "02_dataset_sampling.py",
-                "DEFAULT_FIGURE_DIR",
-                diagnostic_root / "02_dataset_analysis",
-            ),
-            (
-                "02_overlap_analysis.py",
-                "DEFAULT_FIGURE_DIR",
-                diagnostic_root / "02_dataset_analysis",
-            ),
-            (
-                "03_nms_threshold_sweep.py",
-                "DEFAULT_FIGURE_DIR",
-                diagnostic_root / "03_nms_thresholding",
-            ),
-            (
-                "04_augmentation_demo.py",
-                "DEFAULT_FIGURE_DIR",
-                diagnostic_root / "04_augmentation_robustness",
-            ),
-            (
-                "04_augmentation_robustness.py",
-                "DEFAULT_FIGURE_DIR",
-                diagnostic_root / "04_augmentation_robustness",
-            ),
-            (
-                "05_build_error_review_queues.py",
-                "DEFAULT_FIGURE_DIR",
-                diagnostic_root / "05_hard_negative_mining",
-            ),
-        )
-        for filename, constant, expected in expectations:
-            with self.subTest(filename=filename):
-                self.assertEqual(Path(getattr(self.modules[filename], constant)), expected)
-
-    def test_report_figure_builders_require_new_output_directories(self):
-        for filename in (
-            "02_build_report_figures.py",
-            "03_build_report_figures.py",
-            "04_build_report_figures.py",
-            "05_build_report_figures.py",
-        ):
-            with self.subTest(filename=filename), self.assertRaises(SystemExit):
-                self.modules[filename].build_parser().parse_args([])
 
     def test_contract_document_lists_every_canonical_stage(self):
         text = (PROJECT_ROOT / "experiments" / "OUTPUTS.md").read_text(

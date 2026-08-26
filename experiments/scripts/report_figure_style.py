@@ -167,6 +167,22 @@ def three_panel_figure(title, subtitle, panels):
     return fig
 
 
+def save_figure_png(fig, directory, stem):
+    """Write one deterministic PNG and close the figure."""
+
+    target = Path(directory)
+    png = target / f"{stem}.png"
+    fig.savefig(
+        png,
+        dpi=200,
+        bbox_inches="tight",
+        facecolor=WHITE,
+        metadata={"Software": "Matplotlib"},
+    )
+    plt.close(fig)
+    require(png.is_file() and png.stat().st_size > 0, f"PNG was not written: {png}")
+
+
 def save_figure_pair(fig, directory, stem):
     """Write a deterministic PNG/SVG pair and close the figure."""
 

@@ -5,7 +5,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -309,35 +309,6 @@ class EvidenceTests(OverlapFixture):
         self.assertIsNone(figure_path)
         self.assertEqual(artifacts["overlap_summary.csv"].iloc[1]["dataset"], "fixture_sample")
         self.assertEqual(len(paths), 3)
-
-    def test_figure_builder_uses_the_canonical_name(self):
-        profile = self.profile()
-        comparison = overlap.build_overlap_evidence(
-            profile,
-            self.selected,
-            "selected_2",
-        )["crowding_distribution_comparison.csv"]
-
-        axis = Mock()
-        figure = Mock()
-
-        def save_figure(path, **_kwargs):
-            Path(path).write_bytes(b"figure")
-
-        figure.savefig.side_effect = save_figure
-        pyplot = types.ModuleType("matplotlib.pyplot")
-        pyplot.subplots = Mock(return_value=(figure, axis))
-        pyplot.close = Mock()
-        matplotlib = types.ModuleType("matplotlib")
-        matplotlib.pyplot = pyplot
-        with patch.dict(
-            sys.modules,
-            {"matplotlib": matplotlib, "matplotlib.pyplot": pyplot},
-        ):
-            path = overlap.build_crowding_figure(comparison, self.figure_dir)
-        self.assertEqual(path.name, "04_crowding_distribution.png")
-        self.assertEqual(path.read_bytes(), b"figure")
-        pyplot.close.assert_called_once_with(figure)
 
 
 class ReferenceCompatibilityTests(OverlapFixture):

@@ -1,5 +1,5 @@
 {
-  "asset_count": 12,
+  "asset_count": 6,
   "files": [
     {
       "bytes": 156554,
@@ -9,25 +9,11 @@
       "target": "01_system_scope.png"
     },
     {
-      "bytes": 79704,
-      "role": "Project runtime, evaluation, and diagnosis scope",
-      "sha256": "327d31cb20e95b3d8100028f4930262ba4d0e92153673cc0f732b091eb44f2b5",
-      "source_relative_to_experiment_figure_root": null,
-      "target": "01_system_scope.svg"
-    },
-    {
       "bytes": 141306,
       "role": "Checkpoint comparison and quality-first decision",
       "sha256": "472cbbf6588a14cccf908a233d08434089fae983003e7d50c6984d07fc6ec8f3",
       "source_relative_to_experiment_figure_root": "01_model_selection/01_decision_summary.png",
       "target": "02_checkpoint_selection.png"
-    },
-    {
-      "bytes": 95754,
-      "role": "Checkpoint comparison and quality-first decision",
-      "sha256": "67371ff5a24cc40077120d35b6e78436b6b866e09e76909f3f241d8841483164",
-      "source_relative_to_experiment_figure_root": "01_model_selection/01_decision_summary.svg",
-      "target": "02_checkpoint_selection.svg"
     },
     {
       "bytes": 133607,
@@ -37,25 +23,11 @@
       "target": "03_development_workload.png"
     },
     {
-      "bytes": 87478,
-      "role": "Development-workload candidate comparison",
-      "sha256": "152253074e1f1fc016bb766b857b4288018afd079bbe630bfae67354e338c49d",
-      "source_relative_to_experiment_figure_root": "02_dataset_analysis/03_candidate_scorecard.svg",
-      "target": "03_development_workload.svg"
-    },
-    {
       "bytes": 106185,
       "role": "NMS quality and output-volume trade-off",
       "sha256": "2bef5e62603596096bb15913dd8cda0ef864667dd0e908f086611002422e41c3",
       "source_relative_to_experiment_figure_root": "03_nms_thresholding/03_quality_output_frontier.png",
       "target": "04_nms_operating_point.png"
-    },
-    {
-      "bytes": 65506,
-      "role": "NMS quality and output-volume trade-off",
-      "sha256": "0d7e0b4aa108ae07b3a5ed4a646716f91f3ef271d93f82bfe8d4ed41540d28f4",
-      "source_relative_to_experiment_figure_root": "03_nms_thresholding/03_quality_output_frontier.svg",
-      "target": "04_nms_operating_point.svg"
     },
     {
       "bytes": 99213,
@@ -65,25 +37,11 @@
       "target": "05_input_shift_diagnostics.png"
     },
     {
-      "bytes": 64729,
-      "role": "Controlled input-shift quality result",
-      "sha256": "b2eabfdf89a95990667f593569c8a3349f6f477d8544a3f494a5a8da2021545e",
-      "source_relative_to_experiment_figure_root": "04_augmentation_robustness/03_condition_quality.svg",
-      "target": "05_input_shift_diagnostics.svg"
-    },
-    {
       "bytes": 123268,
       "role": "Specialized review-queue separation",
       "sha256": "ff36233a1e4f5bfe1cf68c900d2eabb2ea9a6cb4db075301534c0115a83b05cb",
       "source_relative_to_experiment_figure_root": "05_hard_negative_mining/05_queue_overlap.png",
       "target": "06_error_review_queues.png"
-    },
-    {
-      "bytes": 66643,
-      "role": "Specialized review-queue separation",
-      "sha256": "24972312ab899e89664900c51dd9754f70114e656a3f7ba0adb1b17b5142a077",
-      "source_relative_to_experiment_figure_root": "05_hard_negative_mining/05_queue_overlap.svg",
-      "target": "06_error_review_queues.svg"
     }
   ],
   "generator": "experiments/scripts/build_project_report_figures.py",
