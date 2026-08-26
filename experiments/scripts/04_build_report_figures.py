@@ -3,7 +3,7 @@
 This stage performs no model inference. It verifies the selected-sample,
 augmentation-robustness, and Experiment 03 NMS evidence before rendering a new
 directory containing the six publication figures. The destination is promoted
-only after every PNG and SVG has been written successfully.
+only after every PNG has been written successfully.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.util
 import math
+import os
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -118,6 +119,20 @@ CONDITION_COLORS = {
     "gaussian_blur_k9": VERMILION,
     "vertical_flip": NAVY,
 }
+
+
+def _filesystem_path(path):
+    """Return an extended-length Windows path at the filesystem boundary."""
+
+    normal = Path(path).expanduser().absolute()
+    if os.name != "nt":
+        return normal
+    raw = str(normal)
+    if raw.startswith("\\\\?\\"):
+        return normal
+    if raw.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + raw[2:])
+    return Path("\\\\?\\" + raw)
 
 SAMPLE_COLUMNS = (
     "image_path",
@@ -651,7 +666,7 @@ def _design_figure(evidence):
                     "Checkpoint B (model2)",
                     f"{evidence['expected_images']:,} selected images",
                     f"{evidence['expected_labels']:,} labels across {evidence['expected_classes']} classes",
-                    f"{evidence['expected_source_groups']:,} filename-derived source groups",
+                    f"{evidence['expected_source_groups']:,} source groups",
                 ],
             },
             {
@@ -660,7 +675,7 @@ def _design_figure(evidence):
                     "Same image identities and ground truth",
                     "One deterministic perturbation per run",
                     "Objectness > 0.50; combined confidence ≥ 0.50",
-                    "Class-aware NMS 0.30; match IoU 0.50",
+                    "NMS IoU 0.30; evaluation IoU 0.50",
                 ],
             },
             {
@@ -669,7 +684,7 @@ def _design_figure(evidence):
                     "Threshold-constrained 11-point AP50",
                     "Retained-output context and per-class deltas",
                     "Synthetic blur became the first field-validation hypothesis",
-                    "Vertical flip remained an orientation diagnostic",
+                    "Vertical flip: orientation diagnostic",
                 ],
             },
         ),
@@ -871,7 +886,7 @@ def build_parser():
         "--output-dir",
         type=Path,
         required=True,
-        help="New directory to receive the atomic six-figure PNG/SVG package.",
+        help="New directory to receive the atomic six-figure PNG package.",
     )
     return parser
 
@@ -879,11 +894,15 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     evidence = load_verified_evidence(
-        args.robustness_dir,
-        args.sample_index,
-        args.nms_summary,
+        _filesystem_path(args.robustness_dir),
+        _filesystem_path(args.sample_index),
+        _filesystem_path(args.nms_summary),
     )
-    destination = build_figure_package(evidence, args.asset_root, args.output_dir)
+    destination = build_figure_package(
+        evidence,
+        _filesystem_path(args.asset_root),
+        _filesystem_path(args.output_dir),
+    )
     print(f"[VERIFIED] Images: {evidence['expected_images']:,}")
     print(f"[VERIFIED] Labels: {evidence['expected_labels']:,}")
     print(f"[VERIFIED] Source groups: {evidence['expected_source_groups']:,}")

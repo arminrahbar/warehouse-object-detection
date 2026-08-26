@@ -16,7 +16,7 @@ The principal engineering decisions are:
 1. **Checkpoint B** is the model baseline. It improved full-corpus macro AP50 by
    0.0328 over Checkpoint A, with a paired source-group bootstrap interval that
    excluded zero. Measured runtime did not distinguish the candidates.
-2. A deterministic **5,000-image development workload** preserves the measured
+2. A deterministic **5,000-image analysis workload** preserves the measured
    class, density, and crowding distributions of the 9,525-image corpus while
    satisfying minimum coverage targets for priority low-frequency classes.
 3. Class-aware **NMS IoU 0.30** is retained as a provisional, quality-first
@@ -35,6 +35,14 @@ These results describe the evaluated corpus and pretrained checkpoints. They are
 not claims of independent generalization, production safety, or performance in
 an unrelated warehouse environment.
 
+## 1. System boundary and runtime architecture
+
+The system consumes videos, labeled images, a 20-class vocabulary, and two
+compatible YOLOv4-tiny checkpoint bundles. Model training is outside the current
+scope. The repository implements the inference service, post-processing policy,
+evaluation logic, experiment orchestration, container packaging, and automated
+tests.
+
 **Figure 1. Runtime inference, controlled evaluation, and operational diagnosis**
 
 ![Three-panel overview of the project scope](figures/01_system_scope.png)
@@ -43,14 +51,6 @@ an unrelated warehouse environment.
 diagnosis share model and data contracts but remain separate concerns. This
 separation allows post-processing, metrics, and review priorities to change
 without embedding those decisions inside the model adapter.
-
-## 1. System boundary and runtime architecture
-
-The system consumes videos, labeled images, a 20-class vocabulary, and two
-compatible YOLOv4-tiny checkpoint bundles. Model training is outside the current
-scope. The repository implements the inference service, post-processing policy,
-evaluation logic, experiment orchestration, container packaging, and automated
-tests.
 
 **Table 1. Runtime responsibilities**
 
@@ -112,7 +112,7 @@ Checkpoint B improves 19 classes. Car is the only counterexample, with an AP50
 decline of approximately 0.0019. Runtime remains tied in the measured CPU
 environment and is not used to justify the model choice.
 
-## 3. Coverage-preserving development workload
+## 3. Coverage-preserving analysis workload
 
 Repeated threshold and perturbation studies required a smaller, stable workload.
 Corpus indexing accepted 9,525 image/label pairs, 36,721 structurally valid YOLO
@@ -127,7 +127,7 @@ strata.
 
 **Figure 3. Sampling candidates on their native decision measures**
 
-![Candidate workload scorecard](figures/03_development_workload.png)
+![Candidate workload scorecard](figures/03_analysis_workload.png)
 
 **Interpretation.** Rare-aware density stratification accepts a small increase in
 mean class-share and density-share error relative to density-only sampling in
@@ -229,7 +229,15 @@ failures from disappearing when predictions are sparse. Fire occurs in 51.2% of
 the complete-miss queue and smoke in 23.6%; these values identify review
 priorities, not class-quality estimates or automatic retraining instructions.
 
-## 7. Verification and reproducibility
+## 7. Service packaging, verification, and reproducibility
+
+The deployable unit is the `detector_service` package. Its component-owned
+Dockerfile builds a CPU inference image from the repository root, runs the
+service as a non-root user, and expects datasets, model weights, class names,
+videos, and output directories to be supplied at runtime rather than embedded
+in the image. The same command-line service accepts file and UDP video sources,
+applies the validated preprocessing and post-processing path, and can emit
+annotated JPEG frames or operate without local image output.
 
 Automated tests cover video-resource cleanup, candidate decoding,
 combined-confidence calculations, class-aware suppression, one-to-one matching,
@@ -265,7 +273,7 @@ and summarized results needed to inspect the methodology.
 - The dataset, vocabulary, videos, and checkpoints are externally managed. Their
   training-data overlap and provenance are not fully known.
 - Full-corpus checkpoint selection leaves no untouched confirmation set.
-  Experiments 02–05 share a label-informed development workload.
+  Experiments 02–05 share a label-informed analysis workload.
 - Experiment 01 uses low-floor 101-point AP50; Experiments 03 and 04 use
   threshold-constrained 11-point AP50. Their absolute values are not directly
   comparable.
@@ -283,4 +291,15 @@ The next highest-value work is to collect a source-grouped, untouched field set;
 measure camera-derived blur, compression, and low-light severity curves; define
 business-weighted error costs; and benchmark sustained UDP throughput on the
 intended deployment hardware. Those additions would convert the current
-development evidence into a stronger release-qualification process.
+evaluation evidence into a stronger release-qualification process.
+
+## 9. Detailed experiment evidence
+
+- [Experiment 01 — checkpoint selection](../experiments/reports/01_model_selection/REPORT.md)
+- [Experiment 02 — analysis-workload design](../experiments/reports/02_dataset_analysis/REPORT.md)
+- [Experiment 03 — NMS operating-point selection](../experiments/reports/03_nms_thresholding/REPORT.md)
+- [Experiment 04 — controlled input-shift diagnostics](../experiments/reports/04_augmentation_robustness/REPORT.md)
+- [Experiment 05 — targeted detector-error review](../experiments/reports/05_hard_negative_mining/REPORT.md)
+
+The detailed reports document each controlled comparison, decision rule,
+supporting table, limitation, and implementation path.

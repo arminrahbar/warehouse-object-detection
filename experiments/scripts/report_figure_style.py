@@ -183,36 +183,6 @@ def save_figure_png(fig, directory, stem):
     require(png.is_file() and png.stat().st_size > 0, f"PNG was not written: {png}")
 
 
-def save_figure_pair(fig, directory, stem):
-    """Write a deterministic PNG/SVG pair and close the figure."""
-
-    target = Path(directory)
-    png = target / f"{stem}.png"
-    svg = target / f"{stem}.svg"
-    fig.savefig(
-        png,
-        dpi=200,
-        bbox_inches="tight",
-        facecolor=WHITE,
-        metadata={"Software": "Matplotlib; verified experiment figure builder"},
-    )
-    fig.savefig(
-        svg,
-        format="svg",
-        bbox_inches="tight",
-        facecolor=WHITE,
-        metadata={"Date": None, "Creator": "Verified experiment figure builder"},
-    )
-    plt.close(fig)
-    # Normalize generated text so SVG bytes are stable and pass repository
-    # whitespace checks on Windows, WSL, and CI.
-    content = svg.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-    content = b"\n".join(line.rstrip(b" \t") for line in content.split(b"\n"))
-    svg.write_bytes(content)
-    require(png.is_file() and png.stat().st_size > 0, f"PNG was not written: {png}")
-    require(svg.is_file() and svg.stat().st_size > 0, f"SVG was not written: {svg}")
-
-
 def build_atomic_package(output_dir, builders, *, hash_salt):
     """Render named figure builders and atomically promote their directory."""
 
@@ -228,8 +198,8 @@ def build_atomic_package(output_dir, builders, *, hash_salt):
     try:
         with style_context(hash_salt):
             for stem, builder in builders:
-                save_figure_pair(builder(), staging, stem)
-        expected = {f"{stem}.{extension}" for stem in stems for extension in ("png", "svg")}
+                save_figure_png(builder(), staging, stem)
+        expected = {f"{stem}.png" for stem in stems}
         actual = {path.name for path in staging.iterdir() if path.is_file()}
         require(actual == expected, "Rendered figure package has an unexpected file set.")
         os.replace(staging, destination)

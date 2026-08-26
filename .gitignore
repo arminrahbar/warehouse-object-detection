@@ -16,7 +16,12 @@ detector_service/storage/*
 !detector_service/storage/README.md
 experiments/notebooks/
 experiments/outputs/
-experiments/figures/
+experiments/figures/*
+!experiments/figures/*/
+!experiments/figures/**/*.png
+!experiments/reports/
+!experiments/reports/*.md
+!experiments/reports/**/*.md
 notebook_text_exports/
 
 # Runtime models and media remain external even if copied outside storage/.

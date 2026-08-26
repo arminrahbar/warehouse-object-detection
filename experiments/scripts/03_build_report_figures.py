@@ -2,8 +2,8 @@
 
 This stage performs no inference and does not recompute NMS or AP. It validates
 the preserved threshold-sweep tables, derives five deterministic presentation
-views, and atomically promotes a new output directory only after every PNG/SVG
-pair is complete.
+views, and atomically promotes a new output directory only after all five PNGs
+are complete.
 """
 
 from __future__ import annotations
@@ -744,7 +744,7 @@ def build_parser():
         "--output-dir",
         type=Path,
         required=True,
-        help="New directory to receive the atomic five-figure PNG/SVG package.",
+        help="New directory to receive the atomic five-figure PNG package.",
     )
     return parser
 

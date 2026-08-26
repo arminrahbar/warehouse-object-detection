@@ -2,7 +2,7 @@
 
 This stage performs no sampling and no model inference. It validates the
 canonical dataset-index, characterization, sampling, and overlap CSV evidence
-before rendering six PNG/SVG figure pairs. The destination is promoted only
+before rendering six PNG figures. The destination is promoted only
 after the complete package has been written to a staging directory.
 """
 
@@ -1005,7 +1005,7 @@ def _workload_design_figure(evidence):
     return three_panel_figure(
         "Experiment 02 design at a glance",
         "The checkpoint selected in Experiment 01 stayed outside sample construction; "
-        "this stage fixed a reusable, annotation-driven development workload.",
+        "this stage fixed a reusable, annotation-driven analysis workload.",
         panels,
     )
 

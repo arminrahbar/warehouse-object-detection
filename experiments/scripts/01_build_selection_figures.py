@@ -3,7 +3,7 @@
 This stage performs no inference. It verifies the immutable full-quality,
 paired-runtime, and checkpoint-selection evidence packages before it renders
 any figure. The destination directory is promoted atomically only after every
-requested PNG and SVG has been written successfully.
+requested PNG has been written successfully.
 """
 
 from __future__ import annotations
@@ -762,21 +762,14 @@ def _design_figure(evidence):
     return fig
 
 
-def _save_figure_pair(fig, directory, stem):
+def _save_figure_png(fig, directory, stem):
     png = Path(directory) / f"{stem}.png"
-    svg = Path(directory) / f"{stem}.svg"
     fig.savefig(
         png, dpi=200, bbox_inches="tight", facecolor="white",
         metadata={"Software": "Matplotlib; Experiment 01 verified figure builder"},
     )
-    fig.savefig(
-        svg, format="svg", bbox_inches="tight", facecolor="white",
-        metadata={"Date": None, "Creator": "Experiment 01 verified figure builder"},
-    )
     plt.close(fig)
-    svg.write_bytes(svg.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
     _require(png.is_file() and png.stat().st_size > 0, f"PNG was not written: {png}")
-    _require(svg.is_file() and svg.stat().st_size > 0, f"SVG was not written: {svg}")
 
 
 def build_figure_package(evidence, output_dir, asset_root=None):
@@ -798,8 +791,8 @@ def build_figure_package(evidence, output_dir, asset_root=None):
     )
     with _style_context():
         for stem, builder in builders:
-            _save_figure_pair(builder(), staging, stem)
-    expected = {f"{stem}.{suffix}" for stem in OUTPUT_STEMS for suffix in ("png", "svg")}
+            _save_figure_png(builder(), staging, stem)
+    expected = {f"{stem}.png" for stem in OUTPUT_STEMS}
     observed = {path.name for path in staging.iterdir() if path.is_file()}
     _require(observed == expected, "Figure package output set is incomplete.")
     if asset_root is not None:

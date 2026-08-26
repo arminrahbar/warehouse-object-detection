@@ -34,9 +34,9 @@ CURATED_SOURCES = (
         "Checkpoint comparison and quality-first decision",
     ),
     (
-        "03_development_workload",
+        "03_analysis_workload",
         "02_dataset_analysis/03_candidate_scorecard",
-        "Development-workload candidate comparison",
+        "Analysis-workload candidate comparison",
     ),
     (
         "04_nms_operating_point",

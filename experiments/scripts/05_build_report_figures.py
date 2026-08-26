@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +31,20 @@ from report_figure_style import (  # noqa: E402
     require,
     three_panel_figure,
 )
+
+
+def _filesystem_path(path):
+    """Return an extended-length Windows path at the filesystem boundary."""
+
+    normal = Path(path).expanduser().absolute()
+    if os.name != "nt":
+        return normal
+    raw = str(normal)
+    if raw.startswith("\\\\?\\"):
+        return normal
+    if raw.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + raw[2:])
+    return Path("\\\\?\\" + raw)
 
 import matplotlib.pyplot as plt  # noqa: E402
 
@@ -329,7 +344,7 @@ def _design_figure(evidence):
                     "Same-class one-to-one matching at IoU 0.50",
                     "Four bounded, interpretable error components",
                     "Eligibility masks distinguish missing from good measurements",
-                    "Deterministic count and filename tie-breakers",
+                    "Deterministic tie-breakers",
                 ],
             },
             {
@@ -338,7 +353,7 @@ def _design_figure(evidence):
                     "Five separate top-250 review queues",
                     f"{complete_misses:,} complete-miss images preserved",
                     f"{missed_objects:,} labels in complete-miss images",
-                    "Triage candidates for manual diagnosis—not automatic retraining",
+                    "Manual-diagnosis candidates only",
                 ],
             },
         ],
@@ -651,15 +666,18 @@ def build_parser():
         "--output-dir",
         type=Path,
         required=True,
-        help="New directory to receive the atomic seven-figure PNG/SVG package.",
+        help="New directory to receive the atomic seven-figure PNG package.",
     )
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    evidence = load_verified_evidence(args.component_dir, args.queue_dir)
-    destination = build_figure_package(evidence, args.output_dir)
+    evidence = load_verified_evidence(
+        _filesystem_path(args.component_dir),
+        _filesystem_path(args.queue_dir),
+    )
+    destination = build_figure_package(evidence, _filesystem_path(args.output_dir))
     print(f"[COMPLETE] Promoted verified Experiment 05 figures: {destination}")
     for path in sorted(destination.iterdir()):
         print(f"[WRITE] {path}")

@@ -72,7 +72,7 @@ The inventory is stage `00` because it is shared input:
 
 - Experiment 01 uses it to evaluate both checkpoints on the same corpus.
 - Experiment 02 uses it to characterize the corpus and select a bounded
-  development workload.
+  analysis workload.
 - Experiments 03–05 consume the selected-workload and derived evidence produced
   by Experiment 02 rather than rebuilding the inventory.
 

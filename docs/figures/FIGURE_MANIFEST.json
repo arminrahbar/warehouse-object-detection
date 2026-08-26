@@ -17,10 +17,10 @@
     },
     {
       "bytes": 133607,
-      "role": "Development-workload candidate comparison",
+      "role": "Analysis-workload candidate comparison",
       "sha256": "e5be309b258014215548019b411fa38c9138485ad9fdb6e3d998d16dcc92e2c5",
       "source_relative_to_experiment_figure_root": "02_dataset_analysis/03_candidate_scorecard.png",
-      "target": "03_development_workload.png"
+      "target": "03_analysis_workload.png"
     },
     {
       "bytes": 106185,
