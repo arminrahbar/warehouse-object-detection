@@ -389,7 +389,7 @@ def load_dataset_sample(path, sample_size, paired=False, seed=DEFAULT_SEED):
     if not index_filesystem.is_file():
         raise FileNotFoundError(
             f"Dataset index not found: {index_path}. "
-            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py first."
         )
 
     with index_filesystem.open(newline="", encoding="utf-8") as source:
@@ -1555,7 +1555,7 @@ def build_parser():
         "--dataset-index",
         type=Path,
         default=DEFAULT_DATASET_INDEX,
-        help="Dataset index produced by 00_build_dataset_inventory.py.",
+        help="Dataset index produced by 01_build_dataset_inventory.py.",
     )
     parser.add_argument(
         "--output-root",

@@ -10,41 +10,41 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = PROJECT_ROOT / "experiments" / "scripts"
 OUTPUT_ROOT = PROJECT_ROOT / "experiments" / "outputs"
 SCRIPT_PATHS = {
-    "00_build_dataset_inventory.py": Path(
-        "02_dataset_analysis/00_build_dataset_inventory.py"
+    "01_build_dataset_inventory.py": Path(
+        "02_dataset_analysis/01_build_dataset_inventory.py"
     ),
-    "01_model_comparison.py": Path(
-        "01_model_selection/01_model_comparison.py"
+    "01_compare_model_quality.py": Path(
+        "01_model_selection/01_compare_model_quality.py"
     ),
-    "01_benchmark_inference.py": Path(
-        "01_model_selection/01_benchmark_inference.py"
+    "02_benchmark_inference_latency.py": Path(
+        "01_model_selection/02_benchmark_inference_latency.py"
     ),
-    "01_select_checkpoint.py": Path(
-        "01_model_selection/01_select_checkpoint.py"
+    "03_select_checkpoint.py": Path(
+        "01_model_selection/03_select_checkpoint.py"
     ),
     "02_summarize_dataset.py": Path(
         "02_dataset_analysis/02_summarize_dataset.py"
     ),
-    "02_dataset_sampling.py": Path(
-        "02_dataset_analysis/02_dataset_sampling.py"
+    "03_select_analysis_workload.py": Path(
+        "02_dataset_analysis/03_select_analysis_workload.py"
     ),
-    "02_overlap_analysis.py": Path(
-        "02_dataset_analysis/02_overlap_analysis.py"
+    "04_analyze_overlap.py": Path(
+        "02_dataset_analysis/04_analyze_overlap.py"
     ),
-    "03_nms_threshold_sweep.py": Path(
-        "03_nms_thresholding/03_nms_threshold_sweep.py"
+    "01_sweep_nms_thresholds.py": Path(
+        "03_nms_thresholding/01_sweep_nms_thresholds.py"
     ),
-    "04_augmentation_demo.py": Path(
-        "04_augmentation_robustness/04_augmentation_demo.py"
+    "01_preview_augmentation_conditions.py": Path(
+        "04_augmentation_robustness/01_preview_augmentation_conditions.py"
     ),
-    "04_augmentation_robustness.py": Path(
-        "04_augmentation_robustness/04_augmentation_robustness.py"
+    "02_measure_augmentation_robustness.py": Path(
+        "04_augmentation_robustness/02_measure_augmentation_robustness.py"
     ),
-    "05_build_hnm_components.py": Path(
-        "05_hard_negative_mining/05_build_hnm_components.py"
+    "01_build_error_components.py": Path(
+        "05_hard_negative_mining/01_build_error_components.py"
     ),
-    "05_build_error_review_queues.py": Path(
-        "05_hard_negative_mining/05_build_error_review_queues.py"
+    "02_build_error_review_queues.py": Path(
+        "05_hard_negative_mining/02_build_error_review_queues.py"
     ),
 }
 
@@ -69,18 +69,18 @@ class OutputPathContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         filenames = (
-            "00_build_dataset_inventory.py",
-            "01_model_comparison.py",
-            "01_benchmark_inference.py",
-            "01_select_checkpoint.py",
+            "01_build_dataset_inventory.py",
+            "01_compare_model_quality.py",
+            "02_benchmark_inference_latency.py",
+            "03_select_checkpoint.py",
             "02_summarize_dataset.py",
-            "02_dataset_sampling.py",
-            "02_overlap_analysis.py",
-            "03_nms_threshold_sweep.py",
-            "04_augmentation_demo.py",
-            "04_augmentation_robustness.py",
-            "05_build_hnm_components.py",
-            "05_build_error_review_queues.py",
+            "03_select_analysis_workload.py",
+            "04_analyze_overlap.py",
+            "01_sweep_nms_thresholds.py",
+            "01_preview_augmentation_conditions.py",
+            "02_measure_augmentation_robustness.py",
+            "01_build_error_components.py",
+            "02_build_error_review_queues.py",
         )
         cls.modules = {filename: load_script(filename) for filename in filenames}
 
@@ -93,19 +93,19 @@ class OutputPathContractTests(unittest.TestCase):
 
     def test_evidence_producers_use_numbered_stage_directories(self):
         expectations = (
-            ("00_build_dataset_inventory.py", "DEFAULT_OUTPUT_DIR", "00_dataset_inventory"),
+            ("01_build_dataset_inventory.py", "DEFAULT_OUTPUT_DIR", "00_dataset_inventory"),
             (
-                "01_model_comparison.py",
+                "01_compare_model_quality.py",
                 "DEFAULT_OUTPUT_ROOT",
                 "01_model_selection/01_quality_comparison",
             ),
             (
-                "01_benchmark_inference.py",
+                "02_benchmark_inference_latency.py",
                 "DEFAULT_OUTPUT_ROOT",
                 "01_model_selection/02_runtime_benchmark",
             ),
             (
-                "01_select_checkpoint.py",
+                "03_select_checkpoint.py",
                 "DEFAULT_OUTPUT_ROOT",
                 "01_model_selection/03_checkpoint_decision",
             ),
@@ -115,32 +115,32 @@ class OutputPathContractTests(unittest.TestCase):
                 "02_dataset_analysis/01_dataset_summary",
             ),
             (
-                "02_dataset_sampling.py",
+                "03_select_analysis_workload.py",
                 "DEFAULT_OUTPUT_DIR",
                 "02_dataset_analysis/02_sample_selection",
             ),
             (
-                "02_overlap_analysis.py",
+                "04_analyze_overlap.py",
                 "DEFAULT_OVERLAP_DIR",
                 "02_dataset_analysis/03_overlap_analysis",
             ),
             (
-                "03_nms_threshold_sweep.py",
+                "01_sweep_nms_thresholds.py",
                 "DEFAULT_OUTPUT_DIR",
                 "03_nms_thresholding/01_threshold_sweep",
             ),
             (
-                "04_augmentation_robustness.py",
+                "02_measure_augmentation_robustness.py",
                 "DEFAULT_OUTPUT_DIR",
                 "04_augmentation_robustness/01_condition_evaluation",
             ),
             (
-                "05_build_hnm_components.py",
+                "01_build_error_components.py",
                 "DEFAULT_OUTPUT_DIR",
                 "05_hard_negative_mining/01_error_components",
             ),
             (
-                "05_build_error_review_queues.py",
+                "02_build_error_review_queues.py",
                 "DEFAULT_OUTPUT_DIR",
                 "05_hard_negative_mining/02_review_queues",
             ),
@@ -152,12 +152,12 @@ class OutputPathContractTests(unittest.TestCase):
     def test_stage_dependencies_resolve_to_canonical_upstream_artifacts(self):
         expectations = (
             (
-                "01_model_comparison.py",
+                "01_compare_model_quality.py",
                 "DEFAULT_DATASET_INDEX",
                 "00_dataset_inventory/dataset_index.csv",
             ),
             (
-                "01_benchmark_inference.py",
+                "02_benchmark_inference_latency.py",
                 "DEFAULT_DATASET_INDEX",
                 "00_dataset_inventory/dataset_index.csv",
             ),
@@ -177,58 +177,58 @@ class OutputPathContractTests(unittest.TestCase):
                 "00_dataset_inventory/object_count_distribution.csv",
             ),
             (
-                "02_dataset_sampling.py",
+                "03_select_analysis_workload.py",
                 "DEFAULT_DATASET_INDEX",
                 "00_dataset_inventory/dataset_index.csv",
             ),
             (
-                "02_dataset_sampling.py",
+                "03_select_analysis_workload.py",
                 "DEFAULT_CLASS_DISTRIBUTION",
                 "00_dataset_inventory/class_distribution.csv",
             ),
             (
-                "02_overlap_analysis.py",
+                "04_analyze_overlap.py",
                 "DEFAULT_DATASET_INDEX",
                 "00_dataset_inventory/dataset_index.csv",
             ),
             (
-                "02_overlap_analysis.py",
+                "04_analyze_overlap.py",
                 "DEFAULT_SELECTED_INDEX",
                 "02_dataset_analysis/02_sample_selection/selected_sample_index.csv",
             ),
             (
-                "03_nms_threshold_sweep.py",
+                "01_sweep_nms_thresholds.py",
                 "DEFAULT_SAMPLE_INDEX",
                 "02_dataset_analysis/02_sample_selection/selected_sample_index.csv",
             ),
             (
-                "03_nms_threshold_sweep.py",
+                "01_sweep_nms_thresholds.py",
                 "DEFAULT_OVERLAP_PROFILE",
                 "02_dataset_analysis/03_overlap_analysis/overlap_profile.csv",
             ),
             (
-                "04_augmentation_robustness.py",
+                "02_measure_augmentation_robustness.py",
                 "DEFAULT_SAMPLE_INDEX",
                 "02_dataset_analysis/02_sample_selection/selected_sample_index.csv",
             ),
             (
-                "05_build_hnm_components.py",
+                "01_build_error_components.py",
                 "DEFAULT_SAMPLE_PATH",
                 "02_dataset_analysis/02_sample_selection/selected_sample_index.csv",
             ),
             (
-                "05_build_hnm_components.py",
+                "01_build_error_components.py",
                 "DEFAULT_PREDICTION_PATH",
                 "03_nms_thresholding/01_threshold_sweep/"
                 "model2_predictions_nms_0_3_sample5000.csv",
             ),
             (
-                "05_build_hnm_components.py",
+                "01_build_error_components.py",
                 "DEFAULT_GROUND_TRUTH_PATH",
                 "03_nms_thresholding/01_threshold_sweep/ground_truth_sample5000.csv",
             ),
             (
-                "05_build_error_review_queues.py",
+                "02_build_error_review_queues.py",
                 "DEFAULT_COMPONENT_PATH",
                 "05_hard_negative_mining/01_error_components/"
                 "image_error_components_sample5000.csv",

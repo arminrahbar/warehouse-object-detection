@@ -50,7 +50,7 @@ from report_figure_style import (  # noqa: E402
 )
 
 
-ROBUSTNESS_SCRIPT = SCRIPT_DIR / "04_augmentation_robustness.py"
+ROBUSTNESS_SCRIPT = SCRIPT_DIR / "02_measure_augmentation_robustness.py"
 DEFAULT_ROBUSTNESS_DIR = (
     PROJECT_ROOT
     / "experiments"

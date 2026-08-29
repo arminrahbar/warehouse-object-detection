@@ -17,7 +17,7 @@ SCRIPT_PATH = (
     / "experiments"
     / "scripts"
     / "02_dataset_analysis"
-    / "02_dataset_sampling.py"
+    / "03_select_analysis_workload.py"
 )
 
 spec = importlib.util.spec_from_file_location("dataset_sampling_under_test", SCRIPT_PATH)

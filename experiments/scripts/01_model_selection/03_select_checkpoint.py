@@ -39,12 +39,18 @@ SELECTION_SCHEMA_VERSION = 1
 BOOTSTRAP_EVENT_CELL_BUDGET = 2_000_000
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 QUALITY_SOURCE_FILES = {
-    "experiments/scripts/01_model_selection/01_model_comparison.py",
+    "experiments/scripts/01_model_selection/01_compare_model_quality.py",
     "detector_service/modules/inference/model.py",
     "detector_service/modules/inference/nms.py",
     "detector_service/modules/utils/metrics.py",
 }
 LEGACY_QUALITY_SOURCE_FILES = {
+    "experiments/scripts/01_model_selection/01_model_comparison.py",
+    "detector_service/modules/inference/model.py",
+    "detector_service/modules/inference/nms.py",
+    "detector_service/modules/utils/metrics.py",
+}
+EARLY_LEGACY_QUALITY_SOURCE_FILES = {
     "experiments/scripts/01_model_comparison.py",
     "detector_service/modules/inference/model.py",
     "detector_service/modules/inference/nms.py",
@@ -369,7 +375,11 @@ def _validate_quality_manifest(directory, expected_images, expected_labels, lock
     )
     source_files = manifest.get("source_files")
     _require(isinstance(source_files, dict)
-             and set(source_files) in (QUALITY_SOURCE_FILES, LEGACY_QUALITY_SOURCE_FILES),
+             and set(source_files) in (
+                 QUALITY_SOURCE_FILES,
+                 LEGACY_QUALITY_SOURCE_FILES,
+                 EARLY_LEGACY_QUALITY_SOURCE_FILES,
+             ),
              "Quality source identity set is invalid.")
     for name, identity in source_files.items():
         _validate_file_identity_shape(identity, f"quality source {name}")

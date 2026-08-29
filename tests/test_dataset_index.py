@@ -13,7 +13,7 @@ SCRIPT_PATH = (
     / "experiments"
     / "scripts"
     / "02_dataset_analysis"
-    / "00_build_dataset_inventory.py"
+    / "01_build_dataset_inventory.py"
 )
 
 spec = importlib.util.spec_from_file_location("dataset_index_under_test", SCRIPT_PATH)

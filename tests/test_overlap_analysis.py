@@ -18,7 +18,7 @@ SCRIPT_PATH = (
     / "experiments"
     / "scripts"
     / "02_dataset_analysis"
-    / "02_overlap_analysis.py"
+    / "04_analyze_overlap.py"
 )
 
 

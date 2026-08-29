@@ -17,7 +17,7 @@ from detector_service.modules.rectification.hard_negative_mining import (
     ERROR_COMPONENT_COLUMNS,
     compute_image_error_components,
 )
-from experiments.scripts.experiment_contracts import (
+from experiments.scripts.verified_experiment_inputs import (
     load_verified_checkpoint_selection,
     load_verified_operating_point,
     threshold_tag,

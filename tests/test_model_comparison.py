@@ -19,7 +19,7 @@ SCRIPT_PATH = Path(
         / "experiments"
         / "scripts"
         / "01_model_selection"
-        / "01_model_comparison.py",
+        / "01_compare_model_quality.py",
     )
 )
 spec = importlib.util.spec_from_file_location("model_comparison_under_test", SCRIPT_PATH)

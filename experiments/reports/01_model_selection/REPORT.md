@@ -228,12 +228,12 @@ and applies the lexicographic rule.
 
 | Code path | Primary responsibility |
 |---|---|
-| `experiments/scripts/01_model_selection/01_model_comparison.py` — `load_and_validate_index`, `run_inference_for_model`, `evaluate_model`, `verify_run_directory` | Validate the corpus and assets, run both checkpoints, compute metrics, and verify the quality evidence |
+| `experiments/scripts/01_model_selection/01_compare_model_quality.py` — `load_and_validate_index`, `run_inference_for_model`, `evaluate_model`, `verify_run_directory` | Validate the corpus and assets, run both checkpoints, compute metrics, and verify the quality evidence |
 | `detector_service/modules/inference/model.py` — `Detector` | Load Darknet assets and decode model outputs into candidates |
 | `detector_service/modules/inference/nms.py` — `NMS` | Apply combined-confidence filtering and class-aware suppression |
 | `detector_service/modules/utils/metrics.py` — `match_detections`, `calculate_precision_recall_curve`, `calculate_map_x_point_interpolated` | Enforce same-class one-to-one matching and calculate AP50 |
-| `experiments/scripts/01_model_selection/01_benchmark_inference.py` — `stratified_density_sample`, `benchmark_paired`, `paired_source_group_bootstrap` | Build the deterministic paired runtime sample and latency intervals |
-| `experiments/scripts/01_model_selection/01_select_checkpoint.py` — `validate_quality_run`, `validate_runtime_run`, `paired_quality_bootstrap`, `apply_selection_rule` | Re-verify upstream evidence, estimate quality uncertainty, and apply the locked decision rule |
+| `experiments/scripts/01_model_selection/02_benchmark_inference_latency.py` — `stratified_density_sample`, `benchmark_paired`, `paired_source_group_bootstrap` | Build the deterministic paired runtime sample and latency intervals |
+| `experiments/scripts/01_model_selection/03_select_checkpoint.py` — `validate_quality_run`, `validate_runtime_run`, `paired_quality_bootstrap`, `apply_selection_rule` | Re-verify upstream evidence, estimate quality uncertainty, and apply the locked decision rule |
 
 **Interpretation.** The boundaries make each claim traceable to a specific
 functional stage. Inference produces checkpoint observations, the runtime
@@ -286,9 +286,9 @@ relative to Checkpoint A, with no meaningful measured latency difference.**
 
 The public entry points are:
 
-- `experiments/scripts/01_model_selection/01_model_comparison.py` for full-corpus quality;
-- `experiments/scripts/01_model_selection/01_benchmark_inference.py` for paired runtime;
-- `experiments/scripts/01_model_selection/01_select_checkpoint.py` for the locked decision.
+- `experiments/scripts/01_model_selection/01_compare_model_quality.py` for full-corpus quality;
+- `experiments/scripts/01_model_selection/02_benchmark_inference_latency.py` for paired runtime;
+- `experiments/scripts/01_model_selection/03_select_checkpoint.py` for the locked decision.
 
 The commands require the external asset root and the shared dataset index from
 stage 00. Each script exposes its argument contract through `--help`. A complete

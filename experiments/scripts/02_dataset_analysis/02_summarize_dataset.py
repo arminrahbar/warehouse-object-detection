@@ -75,7 +75,7 @@ def _read_csv(path, label):
     if not source_path.is_file():
         raise FileNotFoundError(
             f"{label} not found: {source_path}. "
-            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py first."
         )
     with source_path.open(newline="", encoding="utf-8") as source:
         reader = csv.DictReader(source)

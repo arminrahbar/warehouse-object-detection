@@ -286,11 +286,11 @@ tuning as separate decisions with separate evidence.
 
 | Implementation path | Key functions | Responsibility |
 |---|---|---|
-| experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py | parse_label_file; build_dataset_index | Validate YOLO rows and build one deterministic image record |
+| experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py | parse_label_file; build_dataset_index | Validate YOLO rows and build one deterministic image record |
 | experiments/scripts/02_dataset_analysis/02_summarize_dataset.py | load_and_validate_sources; build_summary_tables | Reconcile granular and aggregate counts, then characterize the corpus |
-| experiments/scripts/02_dataset_analysis/02_dataset_sampling.py | proportional_targets; rare_class_targets; enforce_rare_class_targets; build_sampling_evidence | Build and compare exact-size candidates, enforce final coverage |
-| experiments/scripts/02_dataset_analysis/02_overlap_analysis.py | compute_overlap_for_boxes; build_overlap_evidence | Compute canonical pairwise ground-truth overlap and selected views |
-| experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py | load_sample_index; load_overlap_profile | Consume the fixed workload and overlap membership in Experiment 03 |
+| experiments/scripts/02_dataset_analysis/03_select_analysis_workload.py | proportional_targets; rare_class_targets; enforce_rare_class_targets; build_sampling_evidence | Build and compare exact-size candidates, enforce final coverage |
+| experiments/scripts/02_dataset_analysis/04_analyze_overlap.py | compute_overlap_for_boxes; build_overlap_evidence | Compute canonical pairwise ground-truth overlap and selected views |
+| experiments/scripts/03_nms_thresholding/01_sweep_nms_thresholds.py | load_sample_index; load_overlap_profile | Consume the fixed workload and overlap membership in Experiment 03 |
 
 *Table 7. Code-level ownership of the Experiment 02 evidence pipeline and its
 Experiment 03 handoff.*
@@ -306,9 +306,9 @@ before the selected workload is accepted. A changed source, inconsistent
 aggregate, invalid pair count, or coverage drift fails the analysis.
 
 The public reproduction entry points are
-`experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py`,
-`02_summarize_dataset.py`, `02_dataset_sampling.py`, and
-`02_overlap_analysis.py`. Together they build the shared inventory,
+`experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py`,
+`02_summarize_dataset.py`, `03_select_analysis_workload.py`, and
+`04_analyze_overlap.py`. Together they build the shared inventory,
 characterize the corpus, select the workload, and calculate the overlap profile.
 Each script exposes its input and output contract through `--help`; full
 regeneration requires the external image and label assets.
@@ -346,10 +346,10 @@ reopening either checkpoint selection or sample construction.
 ## Implementation and reproducibility
 
 The experiment is implemented by
-`experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py`,
+`experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py`,
 `experiments/scripts/02_dataset_analysis/02_summarize_dataset.py`,
-`experiments/scripts/02_dataset_analysis/02_dataset_sampling.py`, and
-`experiments/scripts/02_dataset_analysis/02_overlap_analysis.py`. Together they validate the
+`experiments/scripts/02_dataset_analysis/03_select_analysis_workload.py`, and
+`experiments/scripts/02_dataset_analysis/04_analyze_overlap.py`. Together they validate the
 external image and YOLO-label inventory, characterize the corpus, build the
 three exact-size candidates, enforce the protected-class acceptance gate, and
 produce the overlap membership consumed by Experiment 03. Full reproduction

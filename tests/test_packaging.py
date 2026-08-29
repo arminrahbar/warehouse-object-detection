@@ -270,13 +270,13 @@ class RepositoryPolicyTests(unittest.TestCase):
         self.assertEqual(policy["lint"]["select"], ["E4", "E7", "E9", "F"])
 
         expected_e402_exceptions = {
-            "experiments/scripts/01_model_selection/01_model_comparison.py",
-            "experiments/scripts/02_dataset_analysis/02_overlap_analysis.py",
-            "experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py",
-            "experiments/scripts/04_augmentation_robustness/04_augmentation_demo.py",
-            "experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py",
-            "experiments/scripts/05_hard_negative_mining/05_build_error_review_queues.py",
-            "experiments/scripts/05_hard_negative_mining/05_build_hnm_components.py",
+            "experiments/scripts/01_model_selection/01_compare_model_quality.py",
+            "experiments/scripts/02_dataset_analysis/04_analyze_overlap.py",
+            "experiments/scripts/03_nms_thresholding/01_sweep_nms_thresholds.py",
+            "experiments/scripts/04_augmentation_robustness/01_preview_augmentation_conditions.py",
+            "experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py",
+            "experiments/scripts/05_hard_negative_mining/02_build_error_review_queues.py",
+            "experiments/scripts/05_hard_negative_mining/01_build_error_components.py",
             "tests/test_hard_negative_mining.py",
         }
         per_file_ignores = policy["lint"]["per-file-ignores"]

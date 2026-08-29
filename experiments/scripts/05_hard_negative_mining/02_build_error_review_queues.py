@@ -230,7 +230,7 @@ def load_component_table(path):
     source = Path(path).expanduser().absolute()
     if not source.is_file():
         raise FileNotFoundError(
-            f"Component file not found: {source}. Run 05_build_hnm_components.py first."
+            f"Component file not found: {source}. Run 01_build_error_components.py first."
         )
     table = pd.read_csv(source)
     _required_columns(table, BASE_COMPONENT_COLUMNS, "Component table")

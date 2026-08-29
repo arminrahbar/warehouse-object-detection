@@ -1,4 +1,4 @@
-"""Shared path and upstream-decision contracts for experiment entry points."""
+"""Validate portable paths and verified upstream decisions for later experiments."""
 
 from __future__ import annotations
 

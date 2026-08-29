@@ -25,11 +25,11 @@ def load_module(path, name):
 
 
 components_script = load_module(
-    SCRIPT_DIR / "05_build_hnm_components.py",
+    SCRIPT_DIR / "01_build_error_components.py",
     "hnm_components_under_test",
 )
 queues_script = load_module(
-    SCRIPT_DIR / "05_build_error_review_queues.py",
+    SCRIPT_DIR / "02_build_error_review_queues.py",
     "hnm_queues_under_test",
 )
 
@@ -146,15 +146,15 @@ class HardNegativeFixture(unittest.TestCase):
 class ComponentContractTests(HardNegativeFixture):
     def test_module_import_does_not_require_ignored_experiment_evidence(self):
         with patch(
-            "experiments.scripts.experiment_contracts."
+            "experiments.scripts.verified_experiment_inputs."
             "load_verified_checkpoint_selection",
             side_effect=AssertionError("selection evidence read during import"),
         ), patch(
-            "experiments.scripts.experiment_contracts.load_verified_operating_point",
+            "experiments.scripts.verified_experiment_inputs.load_verified_operating_point",
             side_effect=AssertionError("operating-point evidence read during import"),
         ):
             loaded = load_module(
-                SCRIPT_DIR / "05_build_hnm_components.py",
+                SCRIPT_DIR / "01_build_error_components.py",
                 "hnm_components_clean_checkout_test",
             )
 

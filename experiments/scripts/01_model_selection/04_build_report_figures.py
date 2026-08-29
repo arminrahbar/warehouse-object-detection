@@ -26,7 +26,7 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SELECTOR_PATH = Path(__file__).resolve().parent / "01_select_checkpoint.py"
+SELECTOR_PATH = Path(__file__).resolve().parent / "03_select_checkpoint.py"
 
 MODEL_A = "model1"
 MODEL_B = "model2"

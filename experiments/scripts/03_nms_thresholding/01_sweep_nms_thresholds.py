@@ -24,7 +24,7 @@ from detector_service.modules.utils.metrics import (
     calculate_precision_recall_curve,
     match_detections,
 )
-from experiments.scripts.experiment_contracts import (
+from experiments.scripts.verified_experiment_inputs import (
     EvidenceContractError,
     load_verified_checkpoint_selection,
     resolve_indexed_path as resolve_contract_path,
@@ -384,7 +384,7 @@ def load_sample_index(path, max_images=None):
     if not source.is_file():
         raise FileNotFoundError(
             f"Selected sample index not found: {source}. "
-            "Run experiments/scripts/02_dataset_analysis/02_dataset_sampling.py first."
+            "Run experiments/scripts/02_dataset_analysis/03_select_analysis_workload.py first."
         )
     index = pd.read_csv(source)
     required = ["image_file", "image_path", "label_path", "num_objects"]
@@ -637,7 +637,7 @@ def load_overlap_profile(path, index):
     if not source.is_file():
         raise FileNotFoundError(
             f"Overlap profile not found: {source}. "
-            "Run experiments/scripts/02_dataset_analysis/02_overlap_analysis.py first."
+            "Run experiments/scripts/02_dataset_analysis/04_analyze_overlap.py first."
         )
     overlap = pd.read_csv(source)
     _required_columns(overlap, ["image_file", "pairs_iou_gt_0_1"], "Overlap profile")

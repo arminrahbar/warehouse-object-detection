@@ -14,7 +14,7 @@ SCRIPT_PATH = (
     / "experiments"
     / "scripts"
     / "01_model_selection"
-    / "01_select_checkpoint.py"
+    / "03_select_checkpoint.py"
 )
 spec = importlib.util.spec_from_file_location("checkpoint_selection_under_test", SCRIPT_PATH)
 selection = importlib.util.module_from_spec(spec)

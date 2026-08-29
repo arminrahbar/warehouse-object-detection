@@ -116,7 +116,7 @@ PER_CLASS_COLUMNS = [
     "deployment_f1", "threshold_constrained_ap50_11pt",
 ]
 SOURCE_FILES = (
-    Path("experiments/scripts/01_model_selection/01_model_comparison.py"),
+    Path("experiments/scripts/01_model_selection/01_compare_model_quality.py"),
     Path("detector_service/modules/inference/model.py"),
     Path("detector_service/modules/inference/nms.py"),
     Path("detector_service/modules/utils/metrics.py"),

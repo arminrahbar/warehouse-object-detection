@@ -63,7 +63,7 @@ def load_sample_index(path):
     if not source.is_file():
         raise FileNotFoundError(
             f"Selected sample index not found: {source}. "
-            "Run experiments/scripts/02_dataset_analysis/02_dataset_sampling.py first."
+            "Run experiments/scripts/02_dataset_analysis/03_select_analysis_workload.py first."
         )
     sample = pd.read_csv(source)
     _required_columns(sample, ["image_file", "image_path", "num_objects"], "Sample index")

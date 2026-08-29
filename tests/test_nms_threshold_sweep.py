@@ -19,7 +19,7 @@ SCRIPT_PATH = (
     / "experiments"
     / "scripts"
     / "03_nms_thresholding"
-    / "03_nms_threshold_sweep.py"
+    / "01_sweep_nms_thresholds.py"
 )
 
 

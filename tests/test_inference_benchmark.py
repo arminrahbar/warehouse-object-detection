@@ -17,7 +17,7 @@ SCRIPT_PATH = (
     / "experiments"
     / "scripts"
     / "01_model_selection"
-    / "01_benchmark_inference.py"
+    / "02_benchmark_inference_latency.py"
 )
 
 spec = importlib.util.spec_from_file_location("inference_benchmark_under_test", SCRIPT_PATH)
@@ -192,7 +192,7 @@ class BenchmarkContractTests(BenchmarkFixture):
             / "experiments"
             / "scripts"
             / "01_model_selection"
-            / "01_model_comparison.py"
+            / "01_compare_model_quality.py"
         )
         comparison_spec = importlib.util.spec_from_file_location(
             "comparison_for_benchmark_contract",
@@ -322,7 +322,7 @@ class DatasetLoadingTests(BenchmarkFixture):
         self.assertEqual(sample[0]["image_file"], "a.jpg")
 
     def test_missing_index_has_actionable_message(self):
-        with self.assertRaisesRegex(FileNotFoundError, "00_build_dataset_inventory.py"):
+        with self.assertRaisesRegex(FileNotFoundError, "01_build_dataset_inventory.py"):
             benchmark.load_dataset_sample(self.root / "missing.csv", 2)
 
     def test_required_columns_are_validated(self):

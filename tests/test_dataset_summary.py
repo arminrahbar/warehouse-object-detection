@@ -192,7 +192,7 @@ class SourceValidationTests(SummaryFixture):
         self.assertEqual(counts, [1, 3, 5])
 
     def test_missing_source_has_actionable_message(self):
-        with self.assertRaisesRegex(FileNotFoundError, "00_build_dataset_inventory.py"):
+        with self.assertRaisesRegex(FileNotFoundError, "01_build_dataset_inventory.py"):
             dataset_summary.load_and_validate_sources(
                 self.root / "missing.csv",
                 self.class_path,

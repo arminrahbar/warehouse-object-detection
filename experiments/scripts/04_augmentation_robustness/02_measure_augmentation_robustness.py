@@ -22,7 +22,7 @@ from detector_service.modules.utils.metrics import (
     calculate_precision_recall_curve,
     match_detections,
 )
-from experiments.scripts.experiment_contracts import (
+from experiments.scripts.verified_experiment_inputs import (
     EvidenceContractError,
     load_verified_checkpoint_selection,
     load_verified_operating_point,
@@ -257,7 +257,7 @@ def load_sample_index(path, max_images=None):
     if not source.is_file():
         raise FileNotFoundError(
             f"Selected sample index not found: {source}. "
-            "Run experiments/scripts/02_dataset_analysis/02_dataset_sampling.py first."
+            "Run experiments/scripts/02_dataset_analysis/03_select_analysis_workload.py first."
         )
     index = pd.read_csv(source)
     _required_columns(

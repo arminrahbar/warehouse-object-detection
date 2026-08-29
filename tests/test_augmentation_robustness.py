@@ -41,9 +41,9 @@ def load_module(path, name):
     return module
 
 
-demo = load_module(SCRIPT_DIR / "04_augmentation_demo.py", "augmentation_demo_under_test")
+demo = load_module(SCRIPT_DIR / "01_preview_augmentation_conditions.py", "augmentation_demo_under_test")
 robustness = load_module(
-    SCRIPT_DIR / "04_augmentation_robustness.py",
+    SCRIPT_DIR / "02_measure_augmentation_robustness.py",
     "augmentation_robustness_under_test",
 )
 

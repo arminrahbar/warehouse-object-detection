@@ -207,8 +207,8 @@ The operational follow-up is consequently split by objective:
 |---|---|---|
 | Same-class matching and bounded components | `detector_service/modules/rectification/hard_negative_mining.py` | `compute_image_error_components` |
 | Weighted component scoring | same module | `score_error_components` |
-| Verified upstream decisions and one row per selected image | `experiments/scripts/05_hard_negative_mining/05_build_hnm_components.py` | `resolve_prediction_input`, `build_component_table` |
-| Eligibility, ranking, and queue summaries | `experiments/scripts/05_hard_negative_mining/05_build_error_review_queues.py` | `build_top_samples`, `build_artifacts` |
+| Verified upstream decisions and one row per selected image | `experiments/scripts/05_hard_negative_mining/01_build_error_components.py` | `resolve_prediction_input`, `build_component_table` |
+| Eligibility, ranking, and queue summaries | `experiments/scripts/05_hard_negative_mining/02_build_error_review_queues.py` | `build_top_samples`, `build_artifacts` |
 
 **Interpretation.** Component construction is separated from review policy.
 The component builder resolves the post-NMS input from the verified checkpoint
@@ -247,13 +247,13 @@ automatic retraining set. The queues must be regenerated when the checkpoint,
 
 ## Implementation and reproducibility
 
-`experiments/scripts/05_hard_negative_mining/05_build_hnm_components.py` derives the four image-level
+`experiments/scripts/05_hard_negative_mining/01_build_error_components.py` derives the four image-level
 error components from the selected sample, verified checkpoint and NMS policy,
 ground truth, and retained predictions. By default, it resolves the prediction
 artifact from those upstream decisions; any explicit override must carry the
 same `model` and `nms_threshold` provenance.
 
-`experiments/scripts/05_hard_negative_mining/05_build_error_review_queues.py` applies the five declared
+`experiments/scripts/05_hard_negative_mining/02_build_error_review_queues.py` applies the five declared
 review policies and produces their ranked tables. Reproduction requires the
 same 5,000-image workload, retained predictions, ordered class vocabulary,
 matching policy, component definitions, queue size, and deterministic

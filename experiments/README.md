@@ -10,14 +10,14 @@ trace.
 
 | Stage | Engineering decision | Primary entry point | Report |
 |---|---|---|---|
-| 01 · Model selection | Select the checkpoint that establishes the quality and runtime baseline. | `scripts/01_model_selection/01_model_comparison.py` | [Report](reports/01_model_selection/REPORT.md) |
-| 02 · Dataset analysis | Define a bounded workload that preserves class, density, and crowding characteristics. | `scripts/02_dataset_analysis/02_dataset_sampling.py` | [Report](reports/02_dataset_analysis/REPORT.md) |
-| 03 · NMS thresholding | Select the class-aware NMS IoU operating point. | `scripts/03_nms_thresholding/03_nms_threshold_sweep.py` | [Report](reports/03_nms_thresholding/REPORT.md) |
-| 04 · Input-shift diagnostics | Measure sensitivity to controlled image transformations. | `scripts/04_augmentation_robustness/04_augmentation_robustness.py` | [Report](reports/04_augmentation_robustness/REPORT.md) |
-| 05 · Hard-negative mining | Build deterministic, purpose-specific image review queues. | `scripts/05_hard_negative_mining/05_build_error_review_queues.py` | [Report](reports/05_hard_negative_mining/REPORT.md) |
+| 01 · Model selection | Select the checkpoint that establishes the quality and runtime baseline. | `scripts/01_model_selection/01_compare_model_quality.py` | [Report](reports/01_model_selection/REPORT.md) |
+| 02 · Dataset analysis | Define a bounded workload that preserves class, density, and crowding characteristics. | `scripts/02_dataset_analysis/03_select_analysis_workload.py` | [Report](reports/02_dataset_analysis/REPORT.md) |
+| 03 · NMS thresholding | Select the class-aware NMS IoU operating point. | `scripts/03_nms_thresholding/01_sweep_nms_thresholds.py` | [Report](reports/03_nms_thresholding/REPORT.md) |
+| 04 · Input-shift diagnostics | Measure sensitivity to controlled image transformations. | `scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py` | [Report](reports/04_augmentation_robustness/REPORT.md) |
+| 05 · Hard-negative mining | Build deterministic, purpose-specific image review queues. | `scripts/05_hard_negative_mining/02_build_error_review_queues.py` | [Report](reports/05_hard_negative_mining/REPORT.md) |
 
 The shared corpus inventory is produced by
-`scripts/02_dataset_analysis/00_build_dataset_inventory.py` and stored under
+`scripts/02_dataset_analysis/01_build_dataset_inventory.py` and stored under
 output stage `00_dataset_inventory/`. It is a prerequisite consumed by multiple
 experiments, not a sixth experiment.
 

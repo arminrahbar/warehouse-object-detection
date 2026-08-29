@@ -128,10 +128,10 @@ Vertical flip caused the largest measured degradation, but an inverted scene is 
 
 | Implementation reference | Responsibility |
 |---|---|
-| experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py — apply_condition | Applies each deterministic inference-time transformation. |
-| experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py — parse_yolo_ground_truth | Reads YOLO labels and aligns coordinates for the vertical-flip condition. |
-| experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py — run_raw_inference and apply_fixed_nms | Produces raw predictions, then applies the frozen confidence and suppression policy. |
-| experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py — evaluate_condition | Builds the aggregate and per-class evidence tables. |
+| experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py — apply_condition | Applies each deterministic inference-time transformation. |
+| experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py — parse_yolo_ground_truth | Reads YOLO labels and aligns coordinates for the vertical-flip condition. |
+| experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py — run_raw_inference and apply_fixed_nms | Produces raw predictions, then applies the frozen confidence and suppression policy. |
+| experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py — evaluate_condition | Builds the aggregate and per-class evidence tables. |
 | detector_service/modules/utils/metrics.py — match_detections and calculate_map_x_point_interpolated | Performs one-to-one same-class matching and the 11-point AP calculation. |
 
 *Table 5. Code paths connecting the experimental design to the inference and evaluation implementation.*
@@ -175,7 +175,7 @@ These constraints bound the report's conclusion: it establishes reproducible sen
 
 ## Implementation and reproducibility
 
-`experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py` evaluates the five fixed
+`experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py` evaluates the five fixed
 input conditions using the Experiment 02 workload and Experiment 03 operating
 point. It validates the selected sample, applies each declared transformation,
 aligns vertical-flip labels, and produces aggregate and per-class metrics under

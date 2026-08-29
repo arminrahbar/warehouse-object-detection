@@ -84,12 +84,12 @@ def load_and_validate_inputs(dataset_index_path, class_distribution_path, sample
     if not index_path.is_file():
         raise FileNotFoundError(
             f"Dataset index not found: {index_path}. "
-            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py first."
         )
     if not class_path.is_file():
         raise FileNotFoundError(
             f"Class distribution not found: {class_path}. "
-            "Run experiments/scripts/02_dataset_analysis/00_build_dataset_inventory.py first."
+            "Run experiments/scripts/02_dataset_analysis/01_build_dataset_inventory.py first."
         )
 
     index = pd.read_csv(index_path)

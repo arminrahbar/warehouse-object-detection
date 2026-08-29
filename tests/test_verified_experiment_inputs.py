@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from experiments.scripts.experiment_contracts import (
+from experiments.scripts.verified_experiment_inputs import (
     EvidenceContractError,
     OPERATING_POINT_DATASET,
     OPERATING_POINT_EVIDENCE_SCHEMAS,

@@ -14,13 +14,13 @@ select = ["E4", "E7", "E9", "F"]
 [lint.per-file-ignores]
 # These executable scripts establish their repository import path before
 # importing sibling packages so they also work when invoked by file path.
-"experiments/scripts/01_model_selection/01_model_comparison.py" = ["E402"]
-"experiments/scripts/02_dataset_analysis/02_overlap_analysis.py" = ["E402"]
-"experiments/scripts/03_nms_thresholding/03_nms_threshold_sweep.py" = ["E402"]
-"experiments/scripts/04_augmentation_robustness/04_augmentation_demo.py" = ["E402"]
-"experiments/scripts/04_augmentation_robustness/04_augmentation_robustness.py" = ["E402"]
-"experiments/scripts/05_hard_negative_mining/05_build_error_review_queues.py" = ["E402"]
-"experiments/scripts/05_hard_negative_mining/05_build_hnm_components.py" = ["E402"]
+"experiments/scripts/01_model_selection/01_compare_model_quality.py" = ["E402"]
+"experiments/scripts/02_dataset_analysis/04_analyze_overlap.py" = ["E402"]
+"experiments/scripts/03_nms_thresholding/01_sweep_nms_thresholds.py" = ["E402"]
+"experiments/scripts/04_augmentation_robustness/01_preview_augmentation_conditions.py" = ["E402"]
+"experiments/scripts/04_augmentation_robustness/02_measure_augmentation_robustness.py" = ["E402"]
+"experiments/scripts/05_hard_negative_mining/02_build_error_review_queues.py" = ["E402"]
+"experiments/scripts/05_hard_negative_mining/01_build_error_components.py" = ["E402"]
 
 # This compatibility-focused test imports a temporary legacy module after
 # constructing the exact module search path it is intended to exercise.
